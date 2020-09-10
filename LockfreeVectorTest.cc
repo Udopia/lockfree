@@ -19,10 +19,10 @@ void read_numbers(LockfreeVector<uint32_t>& arr, size_t max_threads) {
     uint32_t count = 0;
     while (size < arr.size()) {
         size = arr.size();
-        for (const uint32_t lit : arr) { 
-            assert(lit > 0);
-            assert(lit <= max_threads);
-            test[lit]++;
+        for (auto it = arr.iter(); !it.done(); ++it) { 
+            assert(*it > 0);
+            assert(*it <= max_threads);
+            test[*it]++;
         }
         std::cout << "Found " << test[0] << " Zeros" << std::endl;
         for (size_t i = 1; i <= max_threads; i++) {
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
 
     std::vector<std::thread> threads { };
     //LockfreeVector<uint32_t> arr(total_numbers);
-    LockfreeVector<uint32_t> arr(1);
+    LockfreeVector<uint32_t> arr(100);
     for (uint32_t n = 0; n < max_threads; n++) {
         threads.push_back(std::thread(produce_numbers, std::ref(arr), n+1, max_numbers));
         threads.push_back(std::thread(read_numbers, std::ref(arr), max_threads));

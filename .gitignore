@@ -30,4 +30,8 @@
 *.exe
 *.out
 *.app
+
+# Mine
 test
+core
+.vscode
