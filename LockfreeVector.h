@@ -26,7 +26,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <mutex>
 #include <memory>
 
-#define SPINLOCK 0
+#define STARVE 0
 #define COUNTER 1
 #define OFFSET 2
 #define SENTINEL 0
@@ -70,34 +70,28 @@ public:
             memory[COUNTER].store(1);
         }
 
-        ManagedMemory copy(uint32_t capacity, uint32_t grow_factor = 1) {
-            ManagedMemory copy { capacity * grow_factor };
-            copy.memory[COUNTER].store(1);
-            std::memcpy((void*)(copy.memory + OFFSET), (void*)(memory + OFFSET), (capacity - OFFSET) * sizeof(T));
-            return copy;
+        void grow(uint32_t capacity, uint32_t grow_factor = 1) {
+            std::atomic<T>* memory2 = (std::atomic<T>*)std::calloc(capacity * grow_factor, sizeof(T));
+            memory2[COUNTER].store(1);
+            std::memcpy((void*)(memory2 + OFFSET), (void*)(memory + OFFSET), (capacity - OFFSET) * sizeof(T));
+
+            memory[STARVE].store(1);
+
+            std::swap(memory, memory2);
+
+            release(memory2);
         }
 
-        std::atomic<T>* acquire() {        
-            T sentinel = 0;
-            std::atomic<T>* mem = memory;
-            while (!mem[SPINLOCK].compare_exchange_weak(sentinel, 1)) {
-                mem = memory;
-            }
-            mem[COUNTER].fetch_add(1);
-            mem[SPINLOCK].store(0);
-            return mem;
+        std::atomic<T>* acquire() {
+            while (memory[STARVE].load() == 1);
+            memory[COUNTER].fetch_add(1);
+            return memory;
         }
 
         static void release(std::atomic<T>* mem) {
-            T sentinel = 0;
-            while (!mem[SPINLOCK].compare_exchange_weak(sentinel, 1)) {
-                sentinel = 0;
-            }
-            mem[COUNTER].fetch_sub(1);
-            if (mem[COUNTER].load() == 0) {
+            int32_t prev = mem[COUNTER].fetch_sub(1);
+            if (prev == 1) {
                 free(mem);
-            } else {
-                mem[SPINLOCK].store(0);
             }
         }
 
@@ -141,9 +135,7 @@ private:
                 return false;
             }
             if (pos >= capacity_-1) {
-                ManagedMemory mem = memory.copy(capacity_, 2);
-                std::swap(memory, mem);
-                mem.release(mem.memory);
+                memory.grow(capacity_, 2);
                 capacity_ *= 2;
             }
             spinlock.store(false);

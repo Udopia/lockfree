@@ -40,7 +40,7 @@ void tbb_read_numbers(tbb::concurrent_vector<uint32_t>& arr, size_t max_threads,
 
 void produce_numbers(LockfreeVector<uint32_t>& arr, uint32_t num, size_t amount) {
     for (size_t i = 0; i < amount; i++) {
-        arr.alt_push(num);
+        arr.push(num);
     }
 }
 
@@ -109,11 +109,11 @@ int main(int argc, char** argv) {
     auto end = std::chrono::steady_clock::now();
     std::cout << "Time elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms" << std::endl;
 
-    std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to tbb concurrent vector" << std::endl;
-    begin = std::chrono::steady_clock::now();
-    run_tbb(max_numbers, max_readers, max_writers);
-    end = std::chrono::steady_clock::now();
-    std::cout << "Time elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms" << std::endl;
+    // std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to tbb concurrent vector" << std::endl;
+    // begin = std::chrono::steady_clock::now();
+    // run_tbb(max_numbers, max_readers, max_writers);
+    // end = std::chrono::steady_clock::now();
+    // std::cout << "Time elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms" << std::endl;
 
     return 0;
 }
