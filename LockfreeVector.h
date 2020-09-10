@@ -120,22 +120,34 @@ private:
     uint32_t capacity_; // capacity is safe by realloc mutex
 
     // Realloc needs mutex
-    std::mutex write;
+    std::atomic<bool> spinlock;
 
     uint32_t get_pos_or_grow() {
         uint32_t pos = this->cursor.load();
         if (pos < capacity_-1) {
             return pos;
         } else {
-            write.lock();
-            if (pos >= capacity_) {
+            while (!ensure_capacity(pos));
+            return pos;
+        }
+    }
+
+    bool ensure_capacity(uint32_t pos) {
+        if (pos < capacity_-1) {
+            return true;
+        } else {
+            bool spinval = false;
+            while (!spinlock.compare_exchange_weak(spinval, true)) {
+                return false;
+            }
+            if (pos >= capacity_-1) {
                 ManagedMemory mem = memory.copy(capacity_, 2);
                 std::swap(memory, mem);
                 mem.release(mem.memory);
                 capacity_ *= 2;
             }
-            write.unlock();
-            return pos;
+            spinlock.store(false);
+            return true;
         }
     }
 
@@ -144,7 +156,7 @@ private:
     LockfreeVector(LockfreeVector&& other) = delete;
 
 public:
-    LockfreeVector(uint32_t n) : capacity_(OFFSET + n), cursor(OFFSET), memory(OFFSET + n) {
+    LockfreeVector(uint32_t n) : capacity_(OFFSET + n), cursor(OFFSET), memory(OFFSET + n), spinlock(false) {
     }
 
     ~LockfreeVector() { 
@@ -169,6 +181,15 @@ public:
             mem = memory.refresh(mem);
         }
         this->cursor.fetch_add(1);
+        memory.release(mem);
+    }
+
+    void alt_push(T value) {
+        uint32_t pos = cursor.fetch_add(1);
+        while (!ensure_capacity(pos));
+        std::atomic<T>* mem = memory.acquire();
+        mem[pos].store(value);
+        memory.release(mem);
     }
 
     // inline const T operator [] (uint32_t i) const {

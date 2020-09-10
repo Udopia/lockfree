@@ -40,7 +40,7 @@ void tbb_read_numbers(tbb::concurrent_vector<uint32_t>& arr, size_t max_threads,
 
 void produce_numbers(LockfreeVector<uint32_t>& arr, uint32_t num, size_t amount) {
     for (size_t i = 0; i < amount; i++) {
-        arr.push(num);
+        arr.alt_push(num);
     }
 }
 
