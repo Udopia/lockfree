@@ -93,7 +93,6 @@ public:
             while (!mem[SPINLOCK].compare_exchange_weak(sentinel, 1)) {
                 sentinel = 0;
             }
-            assert(mem[COUNTER].load() > 0);
             mem[COUNTER].fetch_sub(1);
             if (mem[COUNTER].load() == 0) {
                 free(mem);
@@ -125,7 +124,7 @@ private:
 
     uint32_t get_pos_or_grow() {
         uint32_t pos = this->cursor.load();
-        if (pos < capacity_) {
+        if (pos < capacity_-1) {
             return pos;
         } else {
             write.lock();
