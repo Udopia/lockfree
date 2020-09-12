@@ -79,40 +79,27 @@ public:
             lock_.store(false, std::memory_order_release);
         }
 
-        std::atomic<T>* alloc(uint32_t size, std::atomic<T>* old = nullptr, uint32_t old_size = 0) {
+        uintptr_t atomic_mem_lock() {
+            uintptr_t mem = memory;
+            for (;;) {
+                mem = memory.fetch_or(1, std::memory_order_acquire);
+                if (0 == (1 & mem)) {
+                    break;
+                }
+                while (1 == (1 & memory.load(std::memory_order_relaxed))) { }
+            }
+            return mem;
+        }
+
+        void atomic_mem_unlock() {
+            memory.fetch_and(~1, std::memory_order_release);
+        }
+
+        std::atomic<T>* alloc(uint32_t size, std::atomic<T>* old = nullptr, uint32_t old_size = 0) const {
             std::atomic<T>* mem = (std::atomic<T>*)std::calloc(size, sizeof(T));
             if (old != nullptr) std::memcpy((void*)mem, (void*)old, old_size * sizeof(T));
             mem[COUNTER].store(1);
             return mem;
-        }
-
-        void safe_free(std::atomic<T>* mem) {
-            while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_acquire) != 0) { }
-            free((void*)mem);
-        }
-
-        void grow(uint32_t pos) {
-            if (pos >= capacity.load(std::memory_order_relaxed)-1) {
-                realloc_lock();
-                if (pos >= capacity.load(std::memory_order_acquire)-1) {
-                    uintptr_t memory2 = (uintptr_t)alloc(pos + 10, (std::atomic<T>*)memory.load(), capacity);
-
-                    // for (;;) {std::cout << "-";
-                    //     if (0 == (1 & memory.fetch_or(1, std::memory_order_acquire))) {
-                    //         break;
-                    //     }
-                    //     while (1 == (1 & memory.load(std::memory_order_relaxed))) { std::cout << "_"; }
-                    // }
-
-                    memory2 = ~1 & memory.exchange(memory2, std::memory_order_release);
-
-                    capacity.store(pos + 10, std::memory_order_release);
-
-                    release((std::atomic<T>*)memory2);
-                    safe_free((std::atomic<T>*)memory2);
-                }
-                realloc_unlock();
-            }
         }
 
     public:
@@ -125,22 +112,29 @@ public:
             free((void*)memory.load());
         }
 
-        uint32_t demand(uint32_t need) {
-            grow(need);
+        uint32_t demand(uint32_t pos) {
+            if (pos >= capacity.load(std::memory_order_relaxed)-1) {
+                realloc_lock();
+                if (pos >= capacity.load(std::memory_order_acquire)-1) {
+                    uintptr_t mem = atomic_mem_lock();
+                    uintptr_t memory2 = (uintptr_t)alloc(pos *2, (std::atomic<T>*)mem, capacity);
+
+                    memory2 = ~1 & memory.exchange(memory2, std::memory_order_release);
+
+                    capacity.store(pos *2, std::memory_order_release);
+
+                    while (((std::atomic<T>*)memory2)[COUNTER].load(std::memory_order_acquire) != 1) { }
+                    free((void*)memory2);
+                }
+                realloc_unlock();
+            }
             return capacity.load(std::memory_order_acquire)-1;
         }
 
         std::atomic<T>* acquire() {
-            uintptr_t mem = memory;
-            // for (;;) {std::cout << ":";
-            //     mem = memory.fetch_or(1, std::memory_order_acquire);
-            //     if (0 == (1 & mem)) {
-            //         break;
-            //     }
-            //     while (1 == (1 & memory.load(std::memory_order_relaxed))) { std::cout << "."; }
-            // }
+            uintptr_t mem = atomic_mem_lock();
             ((std::atomic<T>*)mem)[COUNTER].fetch_add(1, std::memory_order_acq_rel);
-            // memory.fetch_and(~1, std::memory_order_release);
+            atomic_mem_unlock();
             return (std::atomic<T>*)mem;
         }
 
@@ -174,20 +168,20 @@ public:
 
     void push(T value) {
         T sentinel = SENTINEL;
-        uint32_t pos = cursor.load(std::memory_order_acquire);
+        uint32_t pos = cursor.load(std::memory_order_relaxed);
         uint32_t capa = memory.demand(pos);
         std::atomic<T>* mem = memory.acquire();
         while (!mem[pos].compare_exchange_strong(sentinel, value, std::memory_order_acq_rel)) {
             sentinel = SENTINEL;
-            pos = cursor.load(std::memory_order_acquire);
+            pos = cursor.load(std::memory_order_relaxed);
             if (pos >= capa) {
-                memory.release(mem);
+                ManagedMemory::release(mem);
                 capa = memory.demand(pos);
                 mem = memory.acquire();
             }
         }
-        cursor.fetch_add(1, std::memory_order_release);
-        memory.release(mem);
+        cursor.fetch_add(1, std::memory_order_relaxed);
+        ManagedMemory::release(mem);
     }
 
     // error prone: realloc while stores are pending
@@ -196,8 +190,8 @@ public:
         uint32_t pos = cursor.fetch_add(1, std::memory_order_acq_rel);
         memory.demand(pos);
         std::atomic<T>* mem = memory.acquire();
-        mem[pos].store(value, std::memory_order_release);
-        memory.release(mem);
+        mem[pos].store(value, std::memory_order_seq_cst);
+        ManagedMemory::release(mem);
     }
 
     // inline const T operator [] (uint32_t i) const {
