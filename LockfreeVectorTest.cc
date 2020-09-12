@@ -44,6 +44,13 @@ void produce_numbers(LockfreeVector<uint32_t>& arr, uint32_t num, size_t amount)
     }
 }
 
+
+void alt_produce_numbers(LockfreeVector<uint32_t>& arr, uint32_t num, size_t amount) {
+    for (size_t i = 0; i < amount; i++) {
+        arr.alt_push(num);
+    }
+}
+
 void read_numbers(LockfreeVector<uint32_t>& arr, size_t max_threads, bool verbose) {
     uint32_t size = 0;
     std::vector<unsigned int> test { };
@@ -67,11 +74,14 @@ void read_numbers(LockfreeVector<uint32_t>& arr, size_t max_threads, bool verbos
     }
 }
 
-void run_mine(size_t max_numbers, size_t max_readers, size_t max_writers) {
+void run_mine(size_t max_numbers, size_t max_readers, size_t max_writers, int mode = 0) {
     std::vector<std::thread> threads { };
     LockfreeVector<uint32_t> arr(10);
     for (uint32_t n = 0; n < std::max(max_readers, max_writers); n++) {
-        if (n < max_writers) threads.push_back(std::thread(produce_numbers, std::ref(arr), n+1, max_numbers));
+        if (n < max_writers) {
+            if (mode == 0) threads.push_back(std::thread(produce_numbers, std::ref(arr), n+1, max_numbers));
+            else if (mode == 1) threads.push_back(std::thread(alt_produce_numbers, std::ref(arr), n+1, max_numbers));
+        }
         if (n < max_readers) threads.push_back(std::thread(read_numbers, std::ref(arr), max_writers, false));
     }
     for (std::thread& thread : threads) {
@@ -102,18 +112,24 @@ int main(int argc, char** argv) {
     size_t max_numbers = atoi(argv[1]);
     size_t max_readers = atoi(argv[2]);
     size_t max_writers = atoi(argv[3]);
+    int mode = 0;
+    if (argc > 4) mode = atoi(argv[4]);
 
     std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to my concurrent vector" << std::endl;
     auto begin = std::chrono::steady_clock::now();
-    run_mine(max_numbers, max_readers, max_writers);
+
+    if (mode == 0) {
+        run_mine(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 1) {
+        run_mine(max_numbers, max_readers, max_writers, 1);
+    }
+    else if (mode == 2) { 
+        run_tbb(max_numbers, max_readers, max_writers);
+    }
+
     auto end = std::chrono::steady_clock::now();
     std::cout << "Time elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms" << std::endl;
-
-    // std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to tbb concurrent vector" << std::endl;
-    // begin = std::chrono::steady_clock::now();
-    // run_tbb(max_numbers, max_readers, max_writers);
-    // end = std::chrono::steady_clock::now();
-    // std::cout << "Time elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << " ms" << std::endl;
 
     return 0;
 }
