@@ -62,7 +62,8 @@ void read_numbers(LockfreeVector<uint32_t>& arr, size_t max_threads, bool verbos
             //assert(*it > 0);
             //assert(*it <= max_threads);
             //if (*it == 0 || *it > max_threads) std::cout << "Read " << *it << std::endl;
-            test[*it]++;
+            if (*it < test.size()) test[*it]++;
+            else std::cout << *it << " ";
         }
         if (verbose) {
             std::cout << "Found " << test[0] << " Zeros" << std::endl;
