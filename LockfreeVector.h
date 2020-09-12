@@ -62,21 +62,9 @@ public:
         }
     };
 
-    struct ManagedMemory {
+    class ManagedMemory {
         std::atomic<T>* memory;
-
-        // realloc needs lock
-        std::atomic<bool> lock_;
-
-        ManagedMemory(uint32_t n) : lock_(false) {
-            memory = (std::atomic<T>*)std::calloc(OFFSET + n + 1, sizeof(T));
-            memory[CAPACITY].store(OFFSET + n + 1);
-            memory[COUNTER].store(1);
-        }
-
-        ~ManagedMemory() {
-            free(memory);
-        }
+        std::atomic<bool> lock_; // realloc
 
         void lock() {
             for (;;) {
@@ -91,13 +79,9 @@ public:
             lock_.store(false, std::memory_order_release);
         }
 
-        T capacity() {
-            return memory[CAPACITY]-1-OFFSET;
-        }
-
-        void safe_free(std::atomic<T>* memory2) {
-            while (memory2[COUNTER].load(std::memory_order_acquire) != 0) { }
-            free(memory2);
+        void safe_free(std::atomic<T>* mem) {
+            while (mem[COUNTER].load(std::memory_order_acquire) != 0) { }
+            free(mem);
         }
 
         void grow(uint32_t pos) {
@@ -117,7 +101,23 @@ public:
             }
         }
 
-        std::atomic<T>* acquire() {
+    public:
+        ManagedMemory(uint32_t n) : lock_(false) {
+            memory = (std::atomic<T>*)std::calloc(OFFSET + n + 1, sizeof(T));
+            memory[CAPACITY].store(OFFSET + n + 1);
+            memory[COUNTER].store(1);
+        }
+
+        ~ManagedMemory() {
+            free(memory);
+        }
+
+        T capacity() {
+            return memory[CAPACITY]-1-OFFSET;
+        }
+
+        std::atomic<T>* acquire(uint32_t need) {
+            grow(need);
             std::atomic<T>* mem = memory;
             mem[COUNTER].fetch_add(1, std::memory_order_acq_rel);
             return mem;
@@ -154,16 +154,14 @@ public:
     void push(T value) {
         T sentinel = SENTINEL;
         uint32_t pos = cursor.load(std::memory_order_acquire);
-        memory.grow(pos);
-        std::atomic<T>* mem = memory.acquire();
+        std::atomic<T>* mem = memory.acquire(pos);
         uint32_t capa = mem[CAPACITY].load(std::memory_order_relaxed) - OFFSET - 1;
         while (!mem[pos].compare_exchange_strong(sentinel, value, std::memory_order_acq_rel)) {
             sentinel = SENTINEL;
             pos = cursor.load(std::memory_order_acquire);
             if (pos >= capa) {
                 memory.release(mem);
-                memory.grow(pos);
-                mem = memory.acquire();
+                mem = memory.acquire(pos);
                 capa = mem[CAPACITY].load(std::memory_order_relaxed) - OFFSET - 1;
             }
         }
@@ -175,8 +173,7 @@ public:
     // need to keep old memory for readers and copy+flip as soon as writers are done
     void alt_push(T value) {
         uint32_t pos = cursor.fetch_add(1);
-        memory.grow(pos);
-        std::atomic<T>* mem = memory.acquire();
+        std::atomic<T>* mem = memory.acquire(pos);
         mem[pos].store(value);
         memory.release(mem);
     }
@@ -187,7 +184,7 @@ public:
     // }
 
     inline const_iterator iter() {
-        return const_iterator(memory.acquire(), OFFSET);
+        return const_iterator(memory.acquire(0), OFFSET);
     }
 
 };
