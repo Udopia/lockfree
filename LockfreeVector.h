@@ -134,6 +134,25 @@ public:
         static void release(std::atomic<T>* mem) {
             mem[COUNTER].fetch_sub(1, std::memory_order_release);
         }
+
+        void set(uint32_t pos, T value) {
+            bool winner = false;
+            uintptr_t mem = atomic_mem_lock();
+            if (pos >= capacity.load(std::memory_order_acquire)-1) {
+                winner = true;
+                uintptr_t memory2 = (uintptr_t)calloc(pos *2, sizeof(T));
+                std::memcpy((void*)((std::atomic<T>*)memory2+1), (void*)((std::atomic<T>*)mem+1), (capacity-2) * sizeof(T));
+                memory2 |= 1;
+                memory.exchange(memory2, std::memory_order_release);
+                capacity.store(pos *2, std::memory_order_release);
+            }
+            ((std::atomic<T>*)(memory & ~1))[pos].store(value, std::memory_order_relaxed);
+            atomic_mem_unlock();
+            if (winner) {
+                while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_acquire) != 0) { }
+                free((void*)mem);
+            }
+        }
     };
 
 private:
@@ -177,14 +196,9 @@ public:
         ManagedMemory::release(mem);
     }
 
-    // error prone: realloc while stores are pending
-    // need to keep old memory for readers and copy+flip as soon as writers are done
     void alt_push(T value) {
         uint32_t pos = cursor.fetch_add(1, std::memory_order_acq_rel);
-        memory.demand(pos);
-        std::atomic<T>* mem = memory.acquire();
-        mem[pos].store(value, std::memory_order_seq_cst);
-        ManagedMemory::release(mem);
+        memory.set(pos, value);
     }
 
     // inline const T operator [] (uint32_t i) const {

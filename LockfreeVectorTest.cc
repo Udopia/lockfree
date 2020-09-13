@@ -74,7 +74,7 @@ void consumer(T& arr, size_t max_threads, bool verbose) {
 template<class T>
 void run_test(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool mode = false) {
     std::vector<std::thread> threads { };
-    T arr(10);
+    T arr(1000);
     for (uint32_t n = 0; n < std::max(max_readers, max_writers); n++) {
         if (n < max_writers) {
             threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers, mode));
@@ -92,7 +92,7 @@ void run_test(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool
 template<class T>
 void run_test2(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool mode = false) {
     std::vector<std::thread> threads { };
-    T arr(10);
+    T arr(1000);
     for (uint32_t n = 0; n < max_writers; n++) {
         threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers, mode));
     }
