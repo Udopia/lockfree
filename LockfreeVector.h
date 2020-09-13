@@ -95,17 +95,10 @@ public:
             memory.fetch_and(~1, std::memory_order_release);
         }
 
-        std::atomic<T>* alloc(uint32_t size, std::atomic<T>* old = nullptr, uint32_t old_size = 0) const {
-            std::atomic<T>* mem = (std::atomic<T>*)std::calloc(size, sizeof(T));
-            if (old != nullptr) std::memcpy((void*)mem, (void*)old, old_size * sizeof(T));
-            mem[COUNTER].store(1);
-            return mem;
-        }
-
     public:
         ManagedMemory(uint32_t n) : lock_(false) {
             capacity = OFFSET + n + 1;
-            memory = (uintptr_t)alloc(capacity);
+            memory = (uintptr_t)std::calloc(capacity, sizeof(T));
         }
 
         ~ManagedMemory() {
@@ -117,14 +110,14 @@ public:
                 realloc_lock();
                 if (pos >= capacity.load(std::memory_order_acquire)-1) {
                     uintptr_t mem = atomic_mem_lock();
-                    uintptr_t memory2 = (uintptr_t)alloc(pos *2, (std::atomic<T>*)mem, capacity);
+                    uintptr_t memory2 = (uintptr_t)calloc(pos *2, sizeof(T));
+                    std::memcpy((void*)((std::atomic<T>*)memory2+1), (void*)((std::atomic<T>*)mem+1), (capacity-2) * sizeof(T));
 
-                    memory2 = ~1 & memory.exchange(memory2, std::memory_order_release);
-
+                    memory.exchange(memory2, std::memory_order_release);
                     capacity.store(pos *2, std::memory_order_release);
 
-                    while (((std::atomic<T>*)memory2)[COUNTER].load(std::memory_order_acquire) != 1) { }
-                    free((void*)memory2);
+                    while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_acquire) != 0) { }
+                    free((void*)mem);
                 }
                 realloc_unlock();
             }
@@ -133,13 +126,13 @@ public:
 
         std::atomic<T>* acquire() {
             uintptr_t mem = atomic_mem_lock();
-            ((std::atomic<T>*)mem)[COUNTER].fetch_add(1, std::memory_order_acq_rel);
+            ((std::atomic<T>*)mem)[COUNTER].fetch_add(1, std::memory_order_release);
             atomic_mem_unlock();
             return (std::atomic<T>*)mem;
         }
 
         static void release(std::atomic<T>* mem) {
-            mem[COUNTER].fetch_sub(1, std::memory_order_acq_rel);
+            mem[COUNTER].fetch_sub(1, std::memory_order_release);
         }
     };
 
