@@ -7,26 +7,60 @@
 
 #include "LockfreeVector.h"
 
-void tbb_produce_numbers(tbb::concurrent_vector<uint32_t>& arr, uint32_t num, size_t amount) {
-    for (size_t i = 0; i < amount; i++) {
-        assert(num > 0);
-        arr.push_back(num);
+typedef LockfreeVector<uint32_t> myvec;
+typedef tbb::concurrent_vector<uint32_t> tbbvec;
+
+
+template<class T>
+void read(T& arr, std::vector<unsigned int>& test, bool mode) { }
+
+template<class T>
+void push(T& arr, uint32_t elem, bool mode) {}
+
+template<>
+void read<myvec>(myvec& arr, std::vector<unsigned int>& test, bool mode) {
+    for (auto it = arr.iter(); !it.done(); ++it) { 
+        if (*it >= 0 && *it < test.size()) test[*it]++;
+        else std::cout << *it << " ";
     }
 }
 
-void tbb_read_numbers(tbb::concurrent_vector<uint32_t>& arr, size_t max_threads, bool verbose) {
+template<>
+void push<myvec>(myvec& arr, uint32_t elem, bool mode) {
+    if (!mode) arr.push(elem);
+    else arr.alt_push(elem);
+}
+
+template<>
+void read<tbbvec>(tbbvec& arr, std::vector<unsigned int>& test, bool mode) {
+    for (uint32_t lit : arr) { 
+        if (lit >= 0 && lit < test.size()) test[lit]++;
+        else std::cout << lit << " ";
+    }
+}
+
+template<>
+void push<tbbvec>(tbbvec& arr, uint32_t elem, bool mode) {
+    arr.push_back(elem);
+}
+
+
+template<class T>
+void producer(T& arr, uint32_t num, uint32_t amount, bool mode) { 
+    for (unsigned int i = 0; i < amount; i++) {
+        push<T>(arr, num, mode);
+    }
+}
+
+template<class T>
+void consumer(T& arr, size_t max_threads, bool verbose) {
     uint32_t size = 0;
     std::vector<unsigned int> test { };
     test.resize(max_threads+1);
     uint32_t count = 0;
     while (size < arr.size()) {
         size = arr.size();
-        for (uint32_t lit : arr) { 
-            //assert(lit > 0);
-            //assert(lit <= max_threads);
-            //if (lit == 0 || lit > max_threads) std::cout << "Read " << lit << ", ";
-            test[lit]++;
-        }
+        read(arr, test, false);
         if (verbose) {
             std::cout << "Found " << test[0] << " Zeros" << std::endl;
             for (size_t i = 1; i <= max_threads; i++) {
@@ -37,71 +71,38 @@ void tbb_read_numbers(tbb::concurrent_vector<uint32_t>& arr, size_t max_threads,
     }
 }
 
-
-void produce_numbers(LockfreeVector<uint32_t>& arr, uint32_t num, size_t amount) {
-    for (size_t i = 0; i < amount; i++) {
-        arr.push(num);
-    }
-}
-
-
-void alt_produce_numbers(LockfreeVector<uint32_t>& arr, uint32_t num, size_t amount) {
-    for (size_t i = 0; i < amount; i++) {
-        arr.alt_push(num);
-    }
-}
-
-void read_numbers(LockfreeVector<uint32_t>& arr, size_t max_threads, bool verbose) {
-    uint32_t size = 0;
-    std::vector<unsigned int> test { };
-    test.resize(max_threads+1);
-    uint32_t count = 0;
-    while (size < arr.size()) {
-        size = arr.size();
-        for (auto it = arr.iter(); !it.done(); ++it) { 
-            //assert(*it > 0);
-            //assert(*it <= max_threads);
-            //if (*it == 0 || *it > max_threads) std::cout << "Read " << *it << std::endl;
-            if (*it < test.size()) test[*it]++;
-            else std::cout << *it << " ";
-        }
-        if (verbose) {
-            std::cout << "Found " << test[0] << " Zeros" << std::endl;
-            for (size_t i = 1; i <= max_threads; i++) {
-                std::cout << "Found " << test[i] << " Entries of Thread " << i << std::endl;
-            }
-        }
-        std::fill(test.begin(), test.end(), 0);
-    }
-}
-
-void run_mine(size_t max_numbers, size_t max_readers, size_t max_writers, int mode = 0) {
+template<class T>
+void run_test(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool mode = false) {
     std::vector<std::thread> threads { };
-    LockfreeVector<uint32_t> arr(10);
+    T arr(10);
     for (uint32_t n = 0; n < std::max(max_readers, max_writers); n++) {
         if (n < max_writers) {
-            if (mode == 0) threads.push_back(std::thread(produce_numbers, std::ref(arr), n+1, max_numbers));
-            else if (mode == 1) threads.push_back(std::thread(alt_produce_numbers, std::ref(arr), n+1, max_numbers));
+            threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers, mode));
         }
-        if (n < max_readers) threads.push_back(std::thread(read_numbers, std::ref(arr), max_writers, false));
+        if (n < max_readers) {
+            threads.push_back(std::thread(consumer<T>, std::ref(arr), max_writers, false));
+        }
     }
     for (std::thread& thread : threads) {
         thread.join();
     }
-    read_numbers(std::ref(arr), max_writers, true);
+    consumer<T>(std::ref(arr), max_writers, true);
 }
 
-void run_tbb(size_t max_numbers, size_t max_readers, size_t max_writers) {
+template<class T>
+void run_test2(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool mode = false) {
     std::vector<std::thread> threads { };
-    tbb::concurrent_vector<uint32_t> arr(10);
-    for (uint32_t n = 0; n < std::max(max_readers, max_writers); n++) {
-        if (n < max_writers) threads.push_back(std::thread(tbb_produce_numbers, std::ref(arr), n+1, max_numbers));
-        if (n < max_readers) threads.push_back(std::thread(tbb_read_numbers, std::ref(arr), max_writers, false));
+    T arr(10);
+    for (uint32_t n = 0; n < max_writers; n++) {
+        threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers, mode));
+    }
+    for (uint32_t n = 0; n < max_readers; n++) {
+        threads.push_back(std::thread(consumer<T>, std::ref(arr), max_writers, false));
     }
     for (std::thread& thread : threads) {
         thread.join();
     }
-    tbb_read_numbers(std::ref(arr), max_writers, true);
+    consumer<T>(std::ref(arr), max_writers, true);
 }
 
 int main(int argc, char** argv) {
@@ -120,13 +121,22 @@ int main(int argc, char** argv) {
     auto begin = std::chrono::steady_clock::now();
 
     if (mode == 0) {
-        run_mine(max_numbers, max_readers, max_writers);
+        run_test<myvec>(max_numbers, max_readers, max_writers);
     }
     else if (mode == 1) {
-        run_mine(max_numbers, max_readers, max_writers, 1);
+        run_test<myvec>(max_numbers, max_readers, max_writers, true);
     }
     else if (mode == 2) { 
-        run_tbb(max_numbers, max_readers, max_writers);
+        run_test<tbbvec>(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 3) {
+        run_test2<myvec>(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 4) {
+        run_test2<myvec>(max_numbers, max_readers, max_writers, true);
+    }
+    else if (mode == 5) { 
+        run_test<tbbvec>(max_numbers, max_readers, max_writers);
     }
 
     auto end = std::chrono::steady_clock::now();
