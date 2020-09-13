@@ -34,13 +34,13 @@ template<typename T = uint32_t>
 class LockfreeVector {
 public:
     class const_iterator {
-        std::atomic<T>* pos;
+        T* pos;
         std::atomic<T>* mem;
 
     public:
         const_iterator(std::atomic<T>* mem_, uint32_t start) { 
             mem = mem_;
-            pos = mem + start;
+            pos = (T*)mem + start;
         }
 
         ~const_iterator() { 
@@ -48,7 +48,7 @@ public:
         }
 
         inline const T operator * () const {
-            return pos->load(std::memory_order_relaxed);
+            return *pos;
         }
 
         inline const_iterator& operator ++ () {
@@ -57,7 +57,7 @@ public:
         }
 
         inline bool done() {
-            return pos->load(std::memory_order_relaxed) == 0;
+            return *pos == 0;
         }
     };
 
