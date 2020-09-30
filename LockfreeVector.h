@@ -35,12 +35,12 @@ class LockfreeVector {
 public:
     class const_iterator {
         T* pos;
-        std::atomic<T>* mem;
+        T* mem;
 
     public:
-        const_iterator(std::atomic<T>* mem_, uint32_t start) { 
+        const_iterator(T* mem_) { 
             mem = mem_;
-            pos = (T*)mem + start;
+            pos = mem_ + OFFSET;
         }
 
         ~const_iterator() { 
@@ -57,27 +57,13 @@ public:
         }
 
         inline bool done() {
-            return *pos == 0;
+            return *pos == SENTINEL;
         }
     };
 
     class ManagedMemory {
         std::atomic<uintptr_t> memory;
-        std::atomic<uint32_t> capacity;
-        std::atomic<bool> lock_; // realloc
-
-        void realloc_lock() {
-            for (;;) {
-                if (!lock_.exchange(true, std::memory_order_acquire)) {
-                    break;
-                }
-                while (lock_.load(std::memory_order_relaxed)) { }
-            }
-        }
-
-        void realloc_unlock() {
-            lock_.store(false, std::memory_order_release);
-        }
+        uint32_t capacity;
 
         uintptr_t atomic_mem_lock() {
             uintptr_t mem = memory;
@@ -96,7 +82,7 @@ public:
         }
 
     public:
-        ManagedMemory(uint32_t n) : lock_(false) {
+        ManagedMemory(uint32_t n) {
             capacity = OFFSET + n + 1;
             memory = (uintptr_t)std::calloc(capacity, sizeof(T));
         }
@@ -105,52 +91,32 @@ public:
             free((void*)memory.load());
         }
 
-        uint32_t demand(uint32_t pos) {
-            if (pos >= capacity.load(std::memory_order_relaxed)-1) {
-                realloc_lock();
-                if (pos >= capacity.load(std::memory_order_acquire)-1) {
-                    uintptr_t mem = atomic_mem_lock();
-                    uintptr_t memory2 = (uintptr_t)calloc(pos *2, sizeof(T));
-                    std::memcpy((void*)((std::atomic<T>*)memory2+1), (void*)((std::atomic<T>*)mem+1), (capacity-2) * sizeof(T));
-
-                    memory.exchange(memory2, std::memory_order_release);
-                    capacity.store(pos *2, std::memory_order_release);
-
-                    while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_acquire) != 0) { }
-                    free((void*)mem);
-                }
-                realloc_unlock();
-            }
-            return capacity.load(std::memory_order_acquire)-1;
-        }
-
-        std::atomic<T>* acquire() {
+        T* acquire() {
             uintptr_t mem = atomic_mem_lock();
-            ((std::atomic<T>*)mem)[COUNTER].fetch_add(1, std::memory_order_release);
+            ((std::atomic<T>*)mem)[COUNTER].fetch_add(1, std::memory_order_relaxed);
             atomic_mem_unlock();
-            return (std::atomic<T>*)mem;
+            return (T*)mem;
         }
 
-        static void release(std::atomic<T>* mem) {
-            mem[COUNTER].fetch_sub(1, std::memory_order_release);
+        static void release(T* mem) {
+            ((std::atomic<T>*)mem)[COUNTER].fetch_sub(1, std::memory_order_relaxed);
         }
 
         void set(uint32_t pos, T value) {
-            bool winner = false;
             uintptr_t mem = atomic_mem_lock();
-            if (pos >= capacity.load(std::memory_order_acquire)-1) {
-                winner = true;
+            if (pos >= capacity-1) {
                 uintptr_t memory2 = (uintptr_t)calloc(pos *2, sizeof(T));
-                std::memcpy((void*)((std::atomic<T>*)memory2+1), (void*)((std::atomic<T>*)mem+1), (capacity-2) * sizeof(T));
-                memory2 |= 1;
-                memory.exchange(memory2, std::memory_order_release);
-                capacity.store(pos *2, std::memory_order_release);
-            }
-            ((std::atomic<T>*)(memory & ~1))[pos].store(value, std::memory_order_relaxed);
-            atomic_mem_unlock();
-            if (winner) {
-                while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_acquire) != 0) { }
+                std::memcpy((void*)memory2, (void*)mem, capacity * sizeof(T));
+                capacity = pos *2;
+                ((T*)memory2)[COUNTER] = 0;
+                ((T*)memory2)[pos] = value;
+                memory.exchange(memory2, std::memory_order_release); //unlock
+                while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_relaxed) != 0) { }
                 free((void*)mem);
+            }
+            else {
+                ((T*)mem)[pos] = value;
+                atomic_mem_unlock();
             }
         }
     };
@@ -179,35 +145,12 @@ public:
     }
 
     void push(T value) {
-        T sentinel = SENTINEL;
-        uint32_t pos = cursor.load(std::memory_order_relaxed);
-        uint32_t capa = memory.demand(pos);
-        std::atomic<T>* mem = memory.acquire();
-        while (!mem[pos].compare_exchange_strong(sentinel, value, std::memory_order_acq_rel)) {
-            sentinel = SENTINEL;
-            pos = cursor.load(std::memory_order_relaxed);
-            if (pos >= capa) {
-                ManagedMemory::release(mem);
-                capa = memory.demand(pos);
-                mem = memory.acquire();
-            }
-        }
-        cursor.fetch_add(1, std::memory_order_relaxed);
-        ManagedMemory::release(mem);
-    }
-
-    void alt_push(T value) {
-        uint32_t pos = cursor.fetch_add(1, std::memory_order_acq_rel);
+        uint32_t pos = cursor.fetch_add(1, std::memory_order_relaxed);
         memory.set(pos, value);
     }
 
-    // inline const T operator [] (uint32_t i) const {
-    //     assert(i < size());
-    //     return memory[OFFSET + i].load();
-    // }
-
     inline const_iterator iter() {
-        return const_iterator(memory.acquire(), OFFSET);
+        return const_iterator(memory.acquire());
     }
 
 };

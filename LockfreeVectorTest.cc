@@ -27,8 +27,7 @@ void read<myvec>(myvec& arr, std::vector<unsigned int>& test, bool mode) {
 
 template<>
 void push<myvec>(myvec& arr, uint32_t elem, bool mode) {
-    if (!mode) arr.push(elem);
-    else arr.alt_push(elem);
+    arr.push(elem);
 }
 
 template<>
@@ -123,20 +122,14 @@ int main(int argc, char** argv) {
     if (mode == 0) {
         run_test<myvec>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 1) {
-        run_test<myvec>(max_numbers, max_readers, max_writers, true);
-    }
-    else if (mode == 2) { 
+    else if (mode == 1) { 
         run_test<tbbvec>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 3) {
+    else if (mode == 2) {
         run_test2<myvec>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 4) {
-        run_test2<myvec>(max_numbers, max_readers, max_writers, true);
-    }
-    else if (mode == 5) { 
-        run_test<tbbvec>(max_numbers, max_readers, max_writers);
+    else if (mode == 3) { 
+        run_test2<tbbvec>(max_numbers, max_readers, max_writers);
     }
 
     auto end = std::chrono::steady_clock::now();
