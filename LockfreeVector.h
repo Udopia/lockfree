@@ -110,7 +110,7 @@ public:
                 capacity = pos *2;
                 ((T*)memory2)[COUNTER] = 0;
                 ((T*)memory2)[pos] = value;
-                memory.exchange(memory2, std::memory_order_release); //unlock
+                memory.store(memory2, std::memory_order_release); //unlock
                 while (((std::atomic<T>*)mem)[COUNTER].load(std::memory_order_relaxed) != 0) { }
                 free((void*)mem);
             }

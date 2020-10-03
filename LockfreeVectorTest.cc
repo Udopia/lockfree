@@ -6,8 +6,10 @@
 #include <tbb/concurrent_vector.h>
 
 #include "LockfreeVector.h"
+#include "LockfreeVector2.h"
 
 typedef LockfreeVector<uint32_t> myvec;
+typedef LockfreeVector2<uint32_t> myvec2;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
 
@@ -31,6 +33,19 @@ void push<myvec>(myvec& arr, uint32_t elem, bool mode) {
 }
 
 template<>
+void read<myvec2>(myvec2& arr, std::vector<unsigned int>& test, bool mode) {
+    for (auto it = arr.iter(); !it.done(); ++it) { 
+        if (*it >= 0 && *it < test.size()) test[*it]++;
+        else std::cout << *it << " ";
+    }
+}
+
+template<>
+void push<myvec2>(myvec2& arr, uint32_t elem, bool mode) {
+    arr.push(elem);
+}
+
+template<>
 void read<tbbvec>(tbbvec& arr, std::vector<unsigned int>& test, bool mode) {
     for (uint32_t lit : arr) { 
         if (lit >= 0 && lit < test.size()) test[lit]++;
@@ -46,13 +61,16 @@ void push<tbbvec>(tbbvec& arr, uint32_t elem, bool mode) {
 
 template<class T>
 void producer(T& arr, uint32_t num, uint32_t amount, bool mode) { 
+    // std::cout << "Writer " << num << " starting" << std::endl;
     for (unsigned int i = 0; i < amount; i++) {
         push<T>(arr, num, mode);
     }
+    // std::cout << "Writer " << num << " exiting" << std::endl;
 }
 
 template<class T>
 void consumer(T& arr, size_t max_threads, bool verbose) {
+    // std::cout << "Reader starting" << std::endl;
     uint32_t size = 0;
     std::vector<unsigned int> test { };
     test.resize(max_threads+1);
@@ -68,6 +86,7 @@ void consumer(T& arr, size_t max_threads, bool verbose) {
         }
         std::fill(test.begin(), test.end(), 0);
     }
+    // std::cout << "Reader exiting" << std::endl;
 }
 
 template<class T>
@@ -123,13 +142,10 @@ int main(int argc, char** argv) {
         run_test<myvec>(max_numbers, max_readers, max_writers);
     }
     else if (mode == 1) { 
+        run_test<myvec2>(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 2) { 
         run_test<tbbvec>(max_numbers, max_readers, max_writers);
-    }
-    else if (mode == 2) {
-        run_test2<myvec>(max_numbers, max_readers, max_writers);
-    }
-    else if (mode == 3) { 
-        run_test2<tbbvec>(max_numbers, max_readers, max_writers);
     }
 
     auto end = std::chrono::steady_clock::now();
