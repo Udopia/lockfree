@@ -56,24 +56,6 @@ public:
             return true;
         }
 
-        bool atomic_multiply_2_true() {
-            uint32_t current = product.load(std::memory_order_relaxed);
-            do {
-                if (current & 1 != 0) return false;
-            } 
-            while (!product.compare_exchange_weak(current, current << 1, std::memory_order_relaxed, std::memory_order_relaxed));
-            return true;
-        }
-
-        bool atomic_multiply_2_false() {
-            uint32_t current = product.load(std::memory_order_relaxed);
-            do {
-                if (current & 1 == 0) return false;
-            } 
-            while (!product.compare_exchange_weak(current, current << 1, std::memory_order_relaxed, std::memory_order_relaxed));
-            return true;
-        }
-
         // returns true iff F is still a factor of product after division
         template<unsigned int F>
         bool atomic_divide() {
@@ -82,16 +64,10 @@ public:
             return current % (F*F) == 0;
         }
 
-        bool atomic_divide_two() {
-            uint32_t current = product.load(std::memory_order_relaxed);
-            while (!product.compare_exchange_weak(current, current >> 1, std::memory_order_relaxed, std::memory_order_relaxed));
-            return current % 4 == 0;
-        }
-
     public:
         ManagedMemory(uint32_t n) : capacity(n + 1), product(7), active(0) {
             memory[active] = (T*)std::calloc(capacity, sizeof(T));
-            atomic_multiply_2_false();//took shared ownership of 0
+            atomic_multiply<2, false>();//took shared ownership of 0
         }
 
         ~ManagedMemory() {
@@ -101,12 +77,11 @@ public:
         // get pointer to active memory, when it is still in use
         T* acquire_active() {
             while (true) {
-                //if (active == 0 && atomic_multiply<2, true>()) {
-                if (active == 0 && atomic_multiply_2_true()) {
-                    return (T*)memory[0];
+                if (active == 0 && atomic_multiply<2, true>()) {
+                    return memory[0];
                 }
                 if (active == 1 && atomic_multiply<3, true>()) {
-                    return (T*)memory[1];
+                    return memory[1];
                 }
             }
         }
@@ -114,19 +89,18 @@ public:
         // get pointer to inactive memory, when it not used anymore
         T* acquire_inactive() {
             while (true) {
-                //if (active == 1 && atomic_multiply<2, false>()) {
-                if (active == 1 && atomic_multiply_2_false()) {
-                    return (T*)memory[0];
+                if (active == 1 && atomic_multiply<2, false>()) {
+                    return memory[0];
                 }
                 if (active == 0 && atomic_multiply<3, false>()) {
-                    return (T*)memory[1];
+                    return memory[1];
                 }
             }
         }
 
         void release(T* mem) {
             if (mem == memory[0]) {
-                if (!atomic_divide_two()) free(mem);
+                if (!atomic_divide<2>()) free(mem);
             } else {
                 if (!atomic_divide<3>()) free(mem);
             }
