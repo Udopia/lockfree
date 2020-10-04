@@ -8,10 +8,12 @@
 #include "LockfreeVector.h"
 #include "LockfreeVector2.h"
 #include "LockfreeVector3.h"
+#include "LockfreeVector4.h"
 
 typedef LockfreeVector<uint32_t> myvec;
 typedef LockfreeVector2<uint32_t> myvec2;
 typedef LockfreeVector3<uint32_t> myvec3;
+typedef LockfreeVector4<uint32_t> myvec4;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
 
@@ -131,6 +133,9 @@ int main(int argc, char** argv) {
         run_test<myvec3>(max_numbers, max_readers, max_writers);
     }
     else if (mode == 3) { 
+        run_test<myvec4>(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 4) { 
         run_test<tbbvec>(max_numbers, max_readers, max_writers);
     }
 
