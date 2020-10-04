@@ -17,8 +17,8 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  **************************************************************************************************/
 
-#ifndef Lockfree_VECTOR2
-#define Lockfree_VECTOR2
+#ifndef Lockfree_VECTOR3
+#define Lockfree_VECTOR3
 
 #include <cstdlib>
 #include <cstring> 
@@ -29,10 +29,11 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #define SENTINEL 0
 
 template<typename T = uint32_t>
-class LockfreeVector2 {
+class LockfreeVector3 {
 public:
     class ManagedMemory {
-        std::array<T*, 2> memory;
+    public:
+        T* memory;
         
         std::atomic<uint32_t> capacity;
 
@@ -66,90 +67,82 @@ public:
 
     public:
         ManagedMemory(uint32_t n) : capacity(n + 1), product(7), active(0) {
-            memory[active] = (T*)std::calloc(capacity, sizeof(T));
-            atomic_multiply<2, false>();//took shared ownership of 0
+            memory = (T*)std::calloc(capacity, sizeof(T));
+            atomic_multiply<2, false>();
         }
 
         ~ManagedMemory() {
-            free((void*)memory[active]);
+            free((void*)memory);
         }
 
         // get pointer to active memory, when it is still in use
-        T* acquire_active() {
+        unsigned int acquire_active() {
             while (true) {
                 if (active == 0 && atomic_multiply<2, true>()) {
-                    return memory[0];
+                    return 0;
                 }
-                if (active == 1 && atomic_multiply<3, true>()) {
-                    return memory[1];
+                else if (active == 1 && atomic_multiply<3, true>()) {
+                    return 1;
                 }
             }
         }
 
         // get pointer to inactive memory, when it not used anymore
-        T* acquire_inactive() {
+        bool acquire_inactive() {
             while (true) {
                 if (active == 1 && atomic_multiply<2, false>()) {
-                    return memory[0];
+                    return true;
                 }
-                if (active == 0 && atomic_multiply<3, false>()) {
-                    return memory[1];
+                else if (active == 0 && atomic_multiply<3, false>()) {
+                    return true;
                 }
             }
         }
 
-        void release(T* mem) {
-            if (mem == memory[0]) {
-                if (!atomic_divide<2>()) free(mem);
-            } else {
-                if (!atomic_divide<3>()) free(mem);
-            }
+        void release(unsigned int act, T* mem) {
+            if (act == 0 && !atomic_divide<2>()) free(mem);
+            if (act == 1 && !atomic_divide<3>()) free(mem);
         }
 
         void set(uint32_t pos, T value) {
             while (true) {
                 uint32_t cap = capacity.load(std::memory_order_relaxed);
                 if (pos+1 < cap) { // GATE 1
-                    T* active_mem = acquire_active();
-                    active_mem[pos] = value;
-                    release(active_mem);
-                    //memory[active][pos] = value;
+                    memory[pos] = value;
                     return;
                 } 
                 else if (pos+1 == cap && acquire_inactive()) { // GATE 2
-                    // prepare unused slot
-                    memory[!active] = (T*)calloc(cap * 2, sizeof(T));
-                    std::memcpy((void*)memory[!active], (void*)memory[active], cap * sizeof(T)); // <- might miss some here
-                    active ^= 1; // switching active slot                    
-                    capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
+                    T* old = memory;
+                    T* fresh = (T*)calloc(cap * 2, sizeof(T));
                     
-                    // copy possibly missing data
-                    T* old = memory[!active];
-                    unsigned int factor = (!active + 2) * (!active + 2);
-                    while (product.load(std::memory_order_relaxed) % factor == 0); // wait until the new inactive is not used by others
-
-                    for (unsigned int i = cap / 2; i < cap-1; i++) {
-                        if (old[i] != 0) memory[active][i] = old[i];
+                    for (unsigned int i = 0; i < cap-1; i++) {
+                        if (old[i] != SENTINEL) fresh[i] = old[i];
+                        else i--;
                     }
-                    release(old); // open GATE 2
-                }
+
+                    memory = fresh;
+                    active ^= 1;
+                    capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
+                    release(active^1, old); // open GATE 2
+                } 
             }
         }
     };
 
     class const_iterator {
         ManagedMemory& memory;
+        unsigned int act;
         T* pos;
         T* mem;
 
     public:
         const_iterator(ManagedMemory& memory_) : memory(memory_) { 
-            mem = memory.acquire_active();
-            pos = mem;
+            act = memory.acquire_active();
+            pos = memory.memory;
         }
 
         ~const_iterator() { 
-            memory.release(mem);
+            memory.release(act, mem);
         }
 
         inline const T operator * () const {
@@ -172,14 +165,14 @@ private:
     ManagedMemory memory;
     std::atomic<uint32_t> cursor;
 
-    LockfreeVector2(LockfreeVector2 const&) = delete;
-    void operator=(LockfreeVector2 const&) = delete;
-    LockfreeVector2(LockfreeVector2&& other) = delete;
+    LockfreeVector3(LockfreeVector3 const&) = delete;
+    void operator=(LockfreeVector3 const&) = delete;
+    LockfreeVector3(LockfreeVector3&& other) = delete;
 
 public:
-    LockfreeVector2(uint32_t n) : cursor(0), memory(n) { }
+    LockfreeVector3(uint32_t n) : cursor(0), memory(n) { }
 
-    ~LockfreeVector2() { }
+    ~LockfreeVector3() { }
 
     inline uint32_t capacity() const {
         return memory.capacity();

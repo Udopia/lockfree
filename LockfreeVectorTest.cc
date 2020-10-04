@@ -7,41 +7,24 @@
 
 #include "LockfreeVector.h"
 #include "LockfreeVector2.h"
+#include "LockfreeVector3.h"
 
 typedef LockfreeVector<uint32_t> myvec;
 typedef LockfreeVector2<uint32_t> myvec2;
+typedef LockfreeVector3<uint32_t> myvec3;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
 
 template<class T>
-void read(T& arr, std::vector<unsigned int>& test, bool mode) { }
+void read(T& arr, std::vector<unsigned int>& test, bool mode) {
+    for (auto it = arr.iter(); !it.done(); ++it) { 
+        if (*it >= 0 && *it < test.size()) test[*it]++;
+        else std::cout << *it << " ";
+    }
+}
 
 template<class T>
-void push(T& arr, uint32_t elem, bool mode) {}
-
-template<>
-void read<myvec>(myvec& arr, std::vector<unsigned int>& test, bool mode) {
-    for (auto it = arr.iter(); !it.done(); ++it) { 
-        if (*it >= 0 && *it < test.size()) test[*it]++;
-        else std::cout << *it << " ";
-    }
-}
-
-template<>
-void push<myvec>(myvec& arr, uint32_t elem, bool mode) {
-    arr.push(elem);
-}
-
-template<>
-void read<myvec2>(myvec2& arr, std::vector<unsigned int>& test, bool mode) {
-    for (auto it = arr.iter(); !it.done(); ++it) { 
-        if (*it >= 0 && *it < test.size()) test[*it]++;
-        else std::cout << *it << " ";
-    }
-}
-
-template<>
-void push<myvec2>(myvec2& arr, uint32_t elem, bool mode) {
+void push(T& arr, uint32_t elem, bool mode) {
     arr.push(elem);
 }
 
@@ -145,6 +128,9 @@ int main(int argc, char** argv) {
         run_test<myvec2>(max_numbers, max_readers, max_writers);
     }
     else if (mode == 2) { 
+        run_test<myvec3>(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 3) { 
         run_test<tbbvec>(max_numbers, max_readers, max_writers);
     }
 
