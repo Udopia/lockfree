@@ -31,44 +31,32 @@ class LockfreeVector5 {
 public:
     class const_iterator {
         T* pos;
-        unsigned int act;
-        LockfreeVector5& vector;
+        std::atomic<unsigned int>& counter;
 
     public:
-        const_iterator(LockfreeVector5& vector_) : vector(vector_) { 
-            act = vector.acquire_active(); // get id of active slot
-            pos = vector.memory;
-        }
+        const_iterator(T* mem, std::atomic<unsigned int>& counter_) : pos(mem), counter(counter_) { }
 
-        ~const_iterator() { 
-            vector.release(act); // release previously allocated slot
-        }
+        ~const_iterator() { counter.fetch_sub(1, std::memory_order_relaxed); }
 
-        inline const T operator * () const {
-            return *pos;
-        }
+        inline const T operator * () const { return *pos; }
 
-        inline const_iterator& operator ++ () {
-            ++pos;            
-            return *this;
-        }
+        inline const_iterator& operator ++ () { ++pos; return *this; }
 
-        inline bool done() {
-            return *pos == S;
-        }
+        inline bool done() { return *pos == S; }
     };
     
 
 private:
     T* memory;
 
-    std::atomic<unsigned int> cursor;
-    std::atomic<unsigned int> capacity;
-
     // memory is managed: for iterator-validity on realloc
     std::array<std::atomic<unsigned int>, 2> counter;
+    
     // cyclic flag, pointing to active counter
     unsigned int active;
+
+    std::atomic<unsigned int> cursor;
+    std::atomic<unsigned int> capacity;
 
     /**
      * Adds 1 to counter[A] and returns true, iff the following conditions are met:
@@ -135,8 +123,7 @@ private:
     } 
 
     void release(unsigned int act) {
-        if (act == 0) atomic_sub<0, false>();
-        if (act == 1) atomic_sub<1, false>();
+        counter[act]--;
     } 
 
     LockfreeVector5(LockfreeVector5 const&) = delete;
@@ -185,7 +172,8 @@ public:
     }
 
     inline const_iterator iter() {
-        return const_iterator(*this);
+        unsigned int act = acquire_active();
+        return const_iterator(memory, counter[act]);
     }
 
 };
