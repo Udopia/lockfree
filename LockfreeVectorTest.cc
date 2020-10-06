@@ -9,11 +9,13 @@
 #include "LockfreeVector2.h"
 #include "LockfreeVector3.h"
 #include "LockfreeVector4.h"
+#include "LockfreeVector5.h"
 
 typedef LockfreeVector<uint32_t> myvec;
 typedef LockfreeVector2<uint32_t> myvec2;
 typedef LockfreeVector3<uint32_t> myvec3;
 typedef LockfreeVector4<uint32_t> myvec4;
+typedef LockfreeVector5<uint32_t> myvec5;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
 
@@ -120,23 +122,26 @@ int main(int argc, char** argv) {
     int mode = 0;
     if (argc > 4) mode = atoi(argv[4]);
 
-    std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to my concurrent vector" << std::endl;
+    std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to concurrent vector" << std::endl;
     auto begin = std::chrono::steady_clock::now();
 
-    if (mode == 0) {
+    if (mode == 0) { 
+        run_test<tbbvec>(max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 1) {
         run_test<myvec>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 1) { 
+    else if (mode == 2) { 
         run_test<myvec2>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 2) { 
+    else if (mode == 3) { 
         run_test<myvec3>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 3) { 
+    else if (mode == 4) { 
         run_test<myvec4>(max_numbers, max_readers, max_writers);
     }
-    else if (mode == 4) { 
-        run_test<tbbvec>(max_numbers, max_readers, max_writers);
+    else if (mode == 5) { 
+        run_test<myvec5>(max_numbers, max_readers, max_writers);
     }
 
     auto end = std::chrono::steady_clock::now();

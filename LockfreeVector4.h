@@ -134,8 +134,8 @@ public:
 
     public:
         const_iterator(ManagedMemory& memory_) : memory(memory_) { 
-            act = memory.acquire_active();
-            pos = memory.memory;
+            act = memory.acquire_active(); // as soon as active memory is protected by the counter it might as well change
+            pos = memory.memory; // can be more recent than acquired counter, but it does not hurt due to cyclicity of active-flag
         }
 
         ~const_iterator() { 
