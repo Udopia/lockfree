@@ -71,7 +71,7 @@ private:
     unsigned int active;
 
     /**
-     * Adds 1 to counter[A] and returns true, iff the following restrictions are met:
+     * Adds 1 to counter[A] and returns true, iff the following conditions are met:
      * If B is true: expects counter[A] to be greater than 0, otherwise does nothing and returns false
      * If B is false: expexts counter[A] to be zero, otherwise does nothing and retruns false
      * */
@@ -85,7 +85,7 @@ private:
     }
 
     /**
-     * Substracts 1 from counter[A] and returns true, iff the following restrictions are met:
+     * Substracts 1 from counter[A] and returns true, iff the following conditions are met:
      * If B is true: expects counter[A] to be zero after removal, otherwise does nothing and returns false
      * If B is false: expexts nothing, just substracts one and returns true
      * */
@@ -161,7 +161,7 @@ public:
     void push(T value) {
         uint32_t pos = cursor.fetch_add(1, std::memory_order_relaxed);
         while (true) {
-            uint32_t cap = capacity.load(std::memory_order_relaxed);
+            uint32_t cap = capacity.load(std::memory_order_acquire);
             if (pos+1 < cap) { // GATE 1
                 memory[pos] = value;
                 return;
@@ -176,9 +176,8 @@ public:
                     else i--;
                 }
 
-                // the following order of events is crucial, maybe needs more protection on other machines?
                 memory = fresh;
-                capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
+                capacity.store(cap * 2, std::memory_order_release); // open GATE 1
                 active ^= 1;
                 release_as_last(active^1, old); // open GATE 2
             } 
