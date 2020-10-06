@@ -51,7 +51,7 @@ private:
 
     // memory is managed: for iterator-validity on realloc
     std::array<std::atomic<unsigned int>, 2> counter;
-    
+
     // cyclic flag, pointing to active counter
     unsigned int active;
 
@@ -69,20 +69,6 @@ private:
         do {
             if (B != (current > 0)) { return false; }
         } while (!counter[A].compare_exchange_weak(current, current + 1, std::memory_order_relaxed, std::memory_order_relaxed));
-        return true;
-    }
-
-    /**
-     * Substracts 1 from counter[A] and returns true, iff the following conditions are met:
-     * If B is true: expects counter[A] to be zero after removal, otherwise does nothing and returns false
-     * If B is false: expexts nothing, just substracts one and returns true
-     * */
-    template<unsigned int A, bool B>
-    bool atomic_sub() {
-        uint32_t current = counter[A].load(std::memory_order_relaxed);
-        do {
-            if (B && (current != 1)) { return false; }
-        } while (!counter[A].compare_exchange_weak(current, current - 1, std::memory_order_relaxed, std::memory_order_relaxed));
         return true;
     }
 
@@ -117,13 +103,11 @@ private:
     }
 
     void release_as_last(unsigned int act, T* mem) {
-        if (act == 0) while (!atomic_sub<0, true>());
-        else if (act == 1) while (!atomic_sub<1, true>());
+        unsigned int expect = 1;
+        while (!counter[act].compare_exchange_weak(expect, 0, std::memory_order_relaxed, std::memory_order_relaxed)) {
+            expect = 1;
+        }
         free(mem);
-    } 
-
-    void release(unsigned int act) {
-        counter[act]--;
     } 
 
     LockfreeVector5(LockfreeVector5 const&) = delete;
