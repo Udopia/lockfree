@@ -26,9 +26,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <mutex>
 #include <memory>
 
-#define SENTINEL 0
-
-template<typename T = uint32_t>
+template<typename T = uint32_t, int S = 0>
 class LockfreeVector5 {
 public:
     class const_iterator {
@@ -58,7 +56,7 @@ public:
         }
 
         inline bool done() {
-            return *pos == SENTINEL;
+            return *pos == S;
         }
     };
     
@@ -98,12 +96,14 @@ private:
         while (true) {
             if (active == 0 && atomic_add<0, true>()) { 
                 // in this block, active can move to 1 but not back to 0, 
-                // memory can be used anyway as it can not be freed before counter on 0 is decremented
+                // memory can be used anyway as it can not be freed before counter on 0 is decremented 
+                // due to cyclic "slot" use
                 return 0;
             }
             else if (active == 1 && atomic_add<1, true>()) { 
                 // in this block, active can move to 0 but not back to 1,
                 // memory can be used anyway as it can not be freed before counter on 1 is decremented
+                // due to cyclic "slot" use
                 return 1;
             }
         }
@@ -133,6 +133,7 @@ private:
 public:
     LockfreeVector5(unsigned int n) : cursor(0), capacity(n + 1), counter(), active(0) {
         memory = (T*)std::calloc(capacity, sizeof(T));
+        if (S != 0) memset(memory, S, capacity * sizeof(T));
         atomic_add<0, false>();
     }
 
@@ -155,9 +156,10 @@ public:
             else if (pos+1 == cap && acquire_inactive()) { // GATE 2
                 T* old = memory;
                 T* fresh = (T*)calloc(cap * 2, sizeof(T));
+                if (S != 0) memset(fresh, S, cap * 2 * sizeof(T));
                 
                 for (unsigned int i = 0; i < cap-1; i++) {
-                    if (old[i] != SENTINEL) fresh[i] = old[i];
+                    if (old[i] != S) fresh[i] = old[i];
                     else i--;
                 }
 

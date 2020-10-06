@@ -15,7 +15,7 @@ typedef LockfreeVector<uint32_t> myvec;
 typedef LockfreeVector2<uint32_t> myvec2;
 typedef LockfreeVector3<uint32_t> myvec3;
 typedef LockfreeVector4<uint32_t> myvec4;
-typedef LockfreeVector5<uint32_t> myvec5;
+typedef LockfreeVector5<int32_t, -1> myvec5;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
 
