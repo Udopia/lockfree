@@ -30,20 +30,18 @@ template<typename T = uint32_t, int S = 0>
 class LockfreeVector5 {
 public:
     class const_iterator {
-        LockfreeVector5& vector;
-        unsigned int act;
         T* pos;
-        T* mem;
+        unsigned int act;
+        LockfreeVector5& vector;
 
     public:
         const_iterator(LockfreeVector5& vector_) : vector(vector_) { 
             act = vector.acquire_active(); // get id of active slot
-            mem = vector.memory; // might be more recent than active slot, but that is fine
-            pos = mem;
+            pos = vector.memory;
         }
 
         ~const_iterator() { 
-            vector.release(act, mem); // release previously allocated slot
+            vector.release(act); // release previously allocated slot
         }
 
         inline const T operator * () const {
@@ -60,13 +58,14 @@ public:
         }
     };
     
-    
-    T* memory;    
 
 private:
+    T* memory;
+
     std::atomic<unsigned int> cursor;
     std::atomic<unsigned int> capacity;
-    // Pointer to memory is managed: for iterator-validity on realloc
+
+    // memory is managed: for iterator-validity on realloc
     std::array<std::atomic<unsigned int>, 2> counter;
     // cyclic flag, pointing to active counter
     unsigned int active;
@@ -85,46 +84,60 @@ private:
         return true;
     }
 
-    // returns true iff counter[A] is greater than zero after the substraction
-    template<unsigned int A>
+    /**
+     * Substracts 1 from counter[A] and returns true, iff the following restrictions are met:
+     * If B is true: expects counter[A] to be zero after removal, otherwise does nothing and returns false
+     * If B is false: expexts nothing, just substracts one and returns true
+     * */
+    template<unsigned int A, bool B>
     bool atomic_sub() {
-        return counter[A].fetch_sub(1, std::memory_order_relaxed) > 1;
+        uint32_t current = counter[A].load(std::memory_order_relaxed);
+        do {
+            if (B && (current != 1)) { return false; }
+        } while (!counter[A].compare_exchange_weak(current, current - 1, std::memory_order_relaxed, std::memory_order_relaxed));
+        return true;
     }
 
-    // get pointer to active memory, when it is still in use
+    /**
+     * Reserve id of active memory, while it is still in use.
+     * The atomic_add<id, true>() ensures that id is still in use while it is reserved. 
+     */
     unsigned int acquire_active() {
         while (true) {
-            if (active == 0 && atomic_add<0, true>()) { 
-                // in this block, active can move to 1 but not back to 0, 
-                // memory can be used anyway as it can not be freed before counter on 0 is decremented 
-                // due to cyclic "slot" use
-                return 0;
+            if (active == 0) { 
+                if (atomic_add<0, true>()) return 0;
             }
-            else if (active == 1 && atomic_add<1, true>()) { 
-                // in this block, active can move to 0 but not back to 1,
-                // memory can be used anyway as it can not be freed before counter on 1 is decremented
-                // due to cyclic "slot" use
-                return 1;
+            else if (active == 1) { 
+                if (atomic_add<1, true>()) return 1;
             }
         }
     }
 
-    // get pointer to inactive memory, when it not used anymore
+    /**
+     * Reserve id of inactive memory, while it is not in use anymore.
+     * The atomic_add<id, false>() ensures that id is not in use while it is reserved. 
+     */
     bool acquire_inactive() {
         while (true) {
-            if (active == 1 && atomic_add<0, false>()) {
-                return true;
+            if (active == 1) {
+                if (atomic_add<0, false>()) return true;
             }
-            else if (active == 0 && atomic_add<1, false>()) {
-                return true;
+            else if (active == 0) {
+                if (atomic_add<1, false>()) return true;
             }
         }
     }
 
-    void release(unsigned int act, T* mem) {
-        if (act == 0 && !atomic_sub<0>()) free(mem);
-        if (act == 1 && !atomic_sub<1>()) free(mem);
-    }
+    void release_as_last(unsigned int act, T* mem) {
+        if (act == 0) while (!atomic_sub<0, true>());
+        else if (act == 1) while (!atomic_sub<1, true>());
+        free(mem);
+    } 
+
+    void release(unsigned int act) {
+        if (act == 0) atomic_sub<0, false>();
+        if (act == 1) atomic_sub<1, false>();
+    } 
 
     LockfreeVector5(LockfreeVector5 const&) = delete;
     void operator=(LockfreeVector5 const&) = delete;
@@ -167,7 +180,7 @@ public:
                 memory = fresh;
                 capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
                 active ^= 1;
-                release(active^1, old); // open GATE 2
+                release_as_last(active^1, old); // open GATE 2
             } 
         }
     }
