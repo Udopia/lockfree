@@ -178,7 +178,7 @@ public:
 
                 memory = fresh;
                 capacity.store(cap * 2, std::memory_order_release); // open GATE 1
-                active ^= 1;
+                active ^= 1; // << maybe this needs a release memory order too
                 release_as_last(active^1, old); // open GATE 2
             } 
         }
