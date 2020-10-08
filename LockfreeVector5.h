@@ -26,15 +26,20 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <mutex>
 #include <memory>
 
-template<typename T = uint32_t, int S = 0>
+/**
+ * T is the content type and must be integral
+ * S is the sentinel element and must not occur in input
+ * Q is the counter type and specifies cache-line behaviour of the counter
+ * */
+template<typename T = uint32_t, int S = 0, typename Q = uint64_t>
 class LockfreeVector5 {
 public:
     class const_iterator {
         T* pos;
-        std::atomic<unsigned int>& counter;
+        std::atomic<Q>& counter;
 
     public:
-        const_iterator(T* mem, std::atomic<unsigned int>& counter_) : pos(mem), counter(counter_) { }
+        const_iterator(T* mem, std::atomic<Q>& counter_) : pos(mem), counter(counter_) { }
 
         ~const_iterator() { counter.fetch_sub(1, std::memory_order_relaxed); }
 
@@ -49,11 +54,9 @@ public:
 private:
     T* memory;
 
-    // memory is managed: for iterator-validity on realloc
-    std::array<std::atomic<unsigned int>, 2> counter;
-
     // cyclic flag, pointing to active counter
     unsigned int active;
+    std::array<std::atomic<Q>, 2> counter;
 
     std::atomic<unsigned int> cursor;
     std::atomic<unsigned int> capacity;
@@ -65,7 +68,7 @@ private:
      * */
     template<unsigned int A, bool B>
     bool atomic_add() {
-        uint32_t current = counter[A].load(std::memory_order_relaxed);
+        Q current = counter[A].load(std::memory_order_relaxed);
         do {
             if (B != (current > 0)) { return false; }
         } while (!counter[A].compare_exchange_weak(current, current + 1, std::memory_order_relaxed, std::memory_order_relaxed));
@@ -103,7 +106,7 @@ private:
     }
 
     void release_as_last(unsigned int act, T* mem) {
-        unsigned int expect = 1;
+        Q expect = 1;
         while (!counter[act].compare_exchange_weak(expect, 0, std::memory_order_relaxed, std::memory_order_relaxed)) {
             expect = 1;
         }
