@@ -135,7 +135,7 @@ public:
     void push(T value) {
         uint32_t pos = cursor.fetch_add(1, std::memory_order_relaxed);
         while (true) {
-            uint32_t cap = capacity.load(std::memory_order_acquire);
+            uint32_t cap = capacity.load(std::memory_order_relaxed);
             if (pos+1 < cap) { // GATE 1
                 memory[pos] = value;
                 return;
@@ -151,8 +151,8 @@ public:
                 }
 
                 memory = fresh;
-                capacity.store(cap * 2, std::memory_order_release); // open GATE 1
                 active ^= 1; // << maybe this needs a release memory order too
+                capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
                 release_as_last(active^1, old); // open GATE 2
             } 
         }
