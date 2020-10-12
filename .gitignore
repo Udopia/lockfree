@@ -33,5 +33,7 @@
 
 # Mine
 test
+dtest
 core
+*.coz
 .vscode
