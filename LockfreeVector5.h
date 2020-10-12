@@ -59,7 +59,7 @@ private:
     std::array<std::atomic<Q>, 2> counter;
 
     std::atomic<unsigned int> cursor;
-    std::atomic<unsigned int> capacity;
+    volatile unsigned int capacity;
 
     /**
      * Adds 1 to counter[A] and returns true, iff the following conditions are met:
@@ -135,12 +135,14 @@ public:
     void push(T value) {
         uint32_t pos = cursor.fetch_add(1, std::memory_order_relaxed);
         while (true) {
-            uint32_t cap = capacity.load(std::memory_order_relaxed);
+            uint32_t cap = capacity;
             if (pos+1 < cap) { // GATE 1
+                std::atomic_thread_fence(std::memory_order_acquire);
                 memory[pos] = value;
                 return;
             } 
             else if (pos+1 == cap && acquire_inactive()) { // GATE 2
+                std::atomic_thread_fence(std::memory_order_acquire);
                 T* old = memory;
                 T* fresh = (T*)calloc(cap * 2, sizeof(T));
                 if (S != 0) memset(fresh, S, cap * 2 * sizeof(T));
@@ -151,8 +153,9 @@ public:
                 }
 
                 memory = fresh;
-                active ^= 1; // << maybe this needs a release memory order too
-                capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
+                active ^= 1;
+                std::atomic_thread_fence(std::memory_order_release);
+                capacity *= 2; // open GATE 1
                 release_as_last(active^1, old); // open GATE 2
             } 
         }
