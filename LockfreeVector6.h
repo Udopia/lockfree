@@ -114,6 +114,7 @@ public:
     }
 
     inline const_iterator iter(unsigned int thread) {
+        assert(thread < C);
         while (hazards[thread] != memory) hazards[thread] = memory;
         return const_iterator(&hazards[thread]);
     }
