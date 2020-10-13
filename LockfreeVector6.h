@@ -55,7 +55,7 @@ private:
     T* memory;
 
     std::atomic<unsigned int> cursor;
-    std::atomic<unsigned int> capacity;
+    volatile unsigned int capacity;
 
     std::array<T*, C> hazards; 
 
@@ -91,12 +91,14 @@ public:
     void push(T value) {
         uint32_t pos = cursor.fetch_add(1, std::memory_order_relaxed);
         while (true) {
-            uint32_t cap = capacity.load(std::memory_order_relaxed);
+            uint32_t cap = capacity;
             if (pos+1 < cap) { // GATE 1
+                std::atomic_thread_fence(std::memory_order_acquire);
                 memory[pos] = value;
                 return;
             } 
             else if (pos+1 == cap) {
+                std::atomic_thread_fence(std::memory_order_acquire);
                 T* old = memory;
                 T* fresh = (T*)calloc(cap * 2, sizeof(T));
                 if (S != 0) memset(fresh, S, cap * 2 * sizeof(T));
@@ -107,16 +109,17 @@ public:
                 }
 
                 memory = fresh;
-                capacity.store(cap * 2, std::memory_order_relaxed); // open GATE 1
+                std::atomic_thread_fence(std::memory_order_release);
+                capacity *= 2; // open GATE 1
                 safe_free(old);
             } 
         }
     }
 
-    inline const_iterator iter(unsigned int thread) {
-        assert(thread < C);
-        while (hazards[thread] != memory) hazards[thread] = memory;
-        return const_iterator(&hazards[thread]);
+    inline const_iterator iter(unsigned int thread_id) {
+        assert(thread_id < C);
+        while (hazards[thread_id] != memory) hazards[thread_id] = memory;
+        return const_iterator(&hazards[thread_id]);
     }
 
 };

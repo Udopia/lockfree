@@ -1,6 +1,7 @@
 
 #include <thread>
 #include <vector>
+#include <numeric>
 #include <iostream>
 #include <cassert>
 #include <tbb/concurrent_vector.h>
@@ -11,6 +12,7 @@
 #include "LockfreeVector4.h"
 #include "LockfreeVector5.h"
 #include "LockfreeVector6.h"
+#include "LockfreeMap.h"
 
 typedef LockfreeVector<uint32_t> myvec;
 typedef LockfreeVector2<uint32_t> myvec2;
@@ -18,106 +20,80 @@ typedef LockfreeVector3<uint32_t> myvec3;
 typedef LockfreeVector4<uint32_t> myvec4;
 typedef LockfreeVector5<int32_t, 0> myvec5;
 typedef LockfreeVector6<int32_t, 0, 50> myvec6;
+typedef LockfreeMap<int32_t, 0, 50> mymap;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
 
 template<class T>
-void read(T& arr, std::vector<unsigned int>& test, unsigned int consumer_id, bool mode) {
-    for (auto it = arr.iter(); !it.done(); ++it) { 
-        if (*it >= 0 && *it < test.size()) test[*it]++;
-        else std::cout << *it << " ";
+void read(T& arr, std::vector<unsigned int>& test, unsigned int consumer_id) {
+    for (auto it = arr.iter(); !it.done(); ++it) test[*it]++;
+}
+template<> void read<myvec6>(myvec6& arr, std::vector<unsigned int>& test, unsigned int consumer_id) {
+    for (auto it = arr.iter(consumer_id); !it.done(); ++it) test[*it]++;
+}
+template<> void read<mymap>(mymap& map, std::vector<unsigned int>& test, unsigned int consumer_id) {
+    for (int i = 0; i < map.size(); i++) {
+        for (auto it = map.iter(i, consumer_id); !it.done(); ++it) test[*it]++;
     }
+}
+template<> void read<tbbvec>(tbbvec& arr, std::vector<unsigned int>& test, unsigned int consumer_id) {
+    for (uint32_t lit : arr) test[lit]++;
 }
 
 template<class T>
-void push(T& arr, uint32_t elem, bool mode) {
+void push(T& arr, uint32_t elem) {
     arr.push(elem);
 }
-
-template<>
-void read<myvec6>(myvec6& arr, std::vector<unsigned int>& test, unsigned int consumer_id, bool mode) {
-    for (auto it = arr.iter(consumer_id); !it.done(); ++it) { 
-        if (*it >= 0 && *it < test.size()) test[*it]++;
-        else std::cout << *it << " ";
-    }
+template<> void push<mymap>(mymap& map, uint32_t elem) {
+    map.push(elem-1, elem);
 }
-
-template<>
-void read<tbbvec>(tbbvec& arr, std::vector<unsigned int>& test, unsigned int consumer_id, bool mode) {
-    for (uint32_t lit : arr) { 
-        if (lit >= 0 && lit < test.size()) test[lit]++;
-        else std::cout << lit << " ";
-    }
-}
-
-template<>
-void push<tbbvec>(tbbvec& arr, uint32_t elem, bool mode) {
+template<> void push<tbbvec>(tbbvec& arr, uint32_t elem) {
     arr.push_back(elem);
 }
 
-
 template<class T>
-void producer(T& arr, uint32_t num, uint32_t amount, bool mode) { 
-    // std::cout << "Writer " << num << " starting" << std::endl;
+void producer(T& arr, uint32_t num, uint32_t amount) { 
     for (unsigned int i = 0; i < amount; i++) {
-        push<T>(arr, num, mode);
+        push<T>(arr, num);
     }
-    // std::cout << "Writer " << num << " exiting" << std::endl;
 }
 
 template<class T>
-void consumer(T& arr, unsigned int consumer_id, size_t max_threads, size_t max_numbers, bool verbose) {
-    // std::cout << "Reader starting" << std::endl;
-    uint32_t size = 0;
+void consumer(T& arr, unsigned int consumer_id, size_t max_threads, size_t max_numbers) {
     std::vector<unsigned int> test { };
     test.resize(max_threads+1);
-    uint32_t count = 0;
+    uint32_t size = 0;
     while (size < max_numbers * max_threads) {
-        size += arr.size();
-        read(arr, test, consumer_id, false);
-        if (verbose) {
-            std::cout << "Found " << test[0] << " Zeros" << std::endl;
-            for (size_t i = 1; i <= max_threads; i++) {
-                std::cout << "Found " << test[i] << " Entries of Thread " << i << std::endl;
-            }
-        }
+        read(arr, test, consumer_id);
+        size += std::accumulate(test.begin(), test.end(), 0);
         std::fill(test.begin(), test.end(), 0);
     }
-    // std::cout << "Reader exiting" << std::endl;
 }
 
 template<class T>
-void run_test(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool mode = false) {
-    std::vector<std::thread> threads { };
-    T arr(1000);
-    for (uint32_t n = 0; n < std::max(max_readers, max_writers); n++) {
-        if (n < max_writers) {
-            threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers, mode));
-        }
-        if (n < max_readers) {
-            threads.push_back(std::thread(consumer<T>, std::ref(arr), n, max_writers, max_numbers, false));
-        }
+void final_count(T& arr, unsigned int consumer_id, size_t max_threads, size_t max_numbers) {
+    std::vector<unsigned int> test { };
+    test.resize(max_threads+1);
+    read(arr, test, consumer_id);
+    std::cout << "Found " << test[0] << " Zeros" << std::endl;
+    for (size_t i = 1; i <= max_threads; i++) {
+        std::cout << "Found " << test[i] << " Entries of Thread " << i << std::endl;
     }
-    for (std::thread& thread : threads) {
-        thread.join();
-    }
-    consumer<T>(std::ref(arr), 0, max_writers, max_numbers, true);
 }
 
 template<class T>
-void run_test2(uint32_t max_numbers, size_t max_readers, size_t max_writers, bool mode = false) {
+void run_test(T& arr, uint32_t max_numbers, size_t max_readers, size_t max_writers) {
     std::vector<std::thread> threads { };
-    T arr(1000);
     for (uint32_t n = 0; n < max_writers; n++) {
-        threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers, mode));
+        threads.push_back(std::thread(producer<T>, std::ref(arr), n+1, max_numbers));
     }
     for (uint32_t n = 0; n < max_readers; n++) {
-        threads.push_back(std::thread(consumer<T>, std::ref(arr), n, max_writers, max_numbers, false));
+        threads.push_back(std::thread(consumer<T>, std::ref(arr), n, max_writers, max_numbers));
     }
     for (std::thread& thread : threads) {
         thread.join();
     }
-    consumer<T>(std::ref(arr), 0, max_writers, max_numbers, true);
+    final_count<T>(std::ref(arr), 0, max_writers, max_numbers);
 }
 
 int main(int argc, char** argv) {
@@ -136,25 +112,36 @@ int main(int argc, char** argv) {
     auto begin = std::chrono::steady_clock::now();
 
     if (mode == 0) { 
-        run_test2<tbbvec>(max_numbers, max_readers, max_writers);
+        tbbvec arr(1000);
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
     else if (mode == 1) {
-        run_test2<myvec>(max_numbers, max_readers, max_writers);
+        myvec arr(1000);
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
     else if (mode == 2) { 
-        run_test2<myvec2>(max_numbers, max_readers, max_writers);
+        myvec2 arr(1000);
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
-    else if (mode == 3) { 
-        run_test2<myvec3>(max_numbers, max_readers, max_writers);
+    else if (mode == 3) {
+        myvec3 arr(1000); 
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
-    else if (mode == 4) { 
-        run_test2<myvec4>(max_numbers, max_readers, max_writers);
+    else if (mode == 4) {
+        myvec4 arr(1000); 
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
-    else if (mode == 5) { 
-        run_test2<myvec5>(max_numbers, max_readers, max_writers);
+    else if (mode == 5) {
+        myvec5 arr(1000); 
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
-    else if (mode == 6) { 
-        run_test2<myvec6>(max_numbers, max_readers, max_writers);
+    else if (mode == 6) {
+        myvec6 arr(1000); 
+        run_test<>(arr, max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 7) {
+        mymap arr(max_writers, 1000); 
+        run_test<>(arr, max_numbers, max_readers, max_writers);
     }
 
     auto end = std::chrono::steady_clock::now();
