@@ -37,13 +37,6 @@ public:
         T* pos;
         T** end;
     };
-    
-    struct cursor_sep_t {
-        std::atomic<T*> pos;
-        std::atomic<T**> end;
-    };
-
-    static_assert(sizeof(std::atomic<cursor_t>) == sizeof(cursor_sep_t));
 
     class const_iterator {
         T* pos;
@@ -54,40 +47,31 @@ public:
         ~const_iterator() { }
 
         inline const T operator * () const { 
-            return *pos; 
+            return pos < (T*)cpe ? *pos : **cpe; 
         }
 
         inline const_iterator& operator ++ () { 
-            ++pos; 
-            if (pos == (T*)cpe) {//} && *cpe != nullptr) { 
+            if (pos == (T*)cpe && *cpe != nullptr) { 
                 pos = *cpe; 
                 cpe = (T**)(pos + N); 
             }
+            ++pos; 
             return *this; 
         }
 
         inline bool operator != (const const_iterator& other) const {
-            std::cout << pos << " " << other.pos << std::endl;
-            return pos != other.pos;
+            return pos != other.pos && (pos != (T*)cpe || *cpe != other.pos);
         }
 
         inline bool operator == (const const_iterator& other) const {
-            std::cout << pos << " " << other.pos << std::endl;
-            return pos == other.pos;
+            return pos == other.pos || (pos == (T*)cpe && *cpe == other.pos);
         }
     };
     
 
 private:
-    std::atomic<T*> reader;
+    alignas(2*sizeof(void*)) std::atomic<cursor_t> cursor;
     T* memory;
-
-    //union {
-    //   alignas(2*sizeof(void*)) atomic<cursor_t> cursor;
-    //    cursor_sep_t cursor_sep;
-    //};
-    std::atomic<T*> cursor alignas(2*sizeof(void*));
-    T** cpe; //current page end
 
     LockfreeVector7(LockfreeVector7 const&) = delete;
     void operator=(LockfreeVector7 const&) = delete;
@@ -97,10 +81,9 @@ public:
     LockfreeVector7() {
         assert(sizeof(T*) % sizeof(T) == 0); // protects naive implementation
         memory = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-        cursor.store(memory, std::memory_order_relaxed);
-        reader.store(memory, std::memory_order_relaxed);
-        cpe = (T**)(memory + N);
+        T** cpe = (T**)(memory + N);
         *cpe = nullptr; // to glue the segments together
+        cursor.store({ memory, cpe }, std::memory_order_relaxed);
     }
 
     ~LockfreeVector7() { 
@@ -113,37 +96,26 @@ public:
     }
 
     inline unsigned int size() const {
-        return cursor.load(std::memory_order_relaxed);
+        return cursor.load(std::memory_order_relaxed).pos;
     }
 
     void push(T value) {
         while (true) {
-            std::atomic_thread_fence(std::memory_order_acquire);
-            T* end = (T*)cpe;
-            T* begin = end - N;
-            T* cur = cursor.load(std::memory_order_acquire);
-            if (cur <= (T*)cpe) {
-                T* pos = cursor.fetch_add(1, std::memory_order_acquire);
-                if (begin <= pos && pos < end) { 
-                    *pos = value;
-                    // T* expect = pos;
-                    // while (!reader.compare_exchange_weak(expect, pos+1)) expect = pos;
+            cursor_t cur = cursor.load(std::memory_order_relaxed);
+            if (cur.pos <= (T*)cur.end && cursor.compare_exchange_weak(cur, { cur.pos + 1, cur.end }, std::memory_order_acq_rel)) {
+                if (cur.pos < (T*)cur.end) {
+                    *cur.pos = value;
                     return;
                 }
-                else if (pos == (T*)cpe) {
+                else if (cur.pos == (T*)cur.end) {
                     T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-                    T** fresh_cpe = (T**)(&fresh[N]);
-                    *fresh_cpe = nullptr;
-                    *cpe = fresh;
-                    // Critical section:
-                    cpe = nullptr;
-                    cursor.store(fresh, std::memory_order_release);
-                    cpe = fresh_cpe;
-                    std::atomic_thread_fence(std::memory_order_release);
-                    // T* expect = pos;
-                    // while (!reader.compare_exchange_weak(expect, fresh)) expect = pos;
+                    T** fresh_end = (T**)(fresh + N);
+                    *fresh_end = nullptr;
+                    //std::cout << "ATOMIC STORE: cur.pos=" << fresh << ", cur.end=" << fresh_end << std::endl;
+                    *cur.end = fresh;
+                    cursor.store({ fresh, fresh_end }, std::memory_order_release);
                 }
-            } 
+            }
         }
     }
 
@@ -152,7 +124,8 @@ public:
     }
 
     inline const_iterator end() {
-        return const_iterator(cursor.load(std::memory_order_acquire));
+        cursor_t cur = cursor.load(std::memory_order_acquire);        
+        return const_iterator(cur.pos > (T*)cur.end ? (T*)cur.end : cur.pos);
     }
 
 };
