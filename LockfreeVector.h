@@ -23,7 +23,6 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <cstdlib>
 #include <cstring> 
 #include <atomic>
-#include <mutex>
 #include <memory>
 
 #define COUNTER 0
