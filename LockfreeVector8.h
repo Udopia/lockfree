@@ -17,8 +17,8 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  **************************************************************************************************/
 
-#ifndef Lockfree_VECTOR7
-#define Lockfree_VECTOR7
+#ifndef Lockfree_VECTOR8
+#define Lockfree_VECTOR8
 
 #include <cstdlib>
 #include <cstring> 
@@ -31,13 +31,8 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
  * N elements per page
  * */
 template<typename T = uint32_t, unsigned int N = 1000>
-class LockfreeVector7 {
+class LockfreeVector8 {
 public:
-    struct alignas(2*sizeof(void*)) cursor_t {
-        T* pos;
-        T** end;
-    };
-
     class const_iterator {
         T* pos;
         T** cpe;
@@ -70,22 +65,23 @@ public:
     
 
 private:
-    alignas(2*sizeof(void*)) std::atomic<cursor_t> cursor;
     T* memory;
+    std::atomic<T*> pos;
+    T** cpe; // current page end
 
-    LockfreeVector7(LockfreeVector7 const&) = delete;
-    void operator=(LockfreeVector7 const&) = delete;
-    LockfreeVector7(LockfreeVector7&& other) = delete;
+    LockfreeVector8(LockfreeVector8 const&) = delete;
+    void operator=(LockfreeVector8 const&) = delete;
+    LockfreeVector8(LockfreeVector8&& other) = delete;
 
 public:
-    LockfreeVector7() {
+    LockfreeVector8() {
         memory = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-        T** cpe = (T**)(memory + N);
+        pos.store(memory, std::memory_order_relaxed);
+        cpe = (T**)(memory + N);
         *cpe = nullptr; // to glue the segments together
-        cursor.store({ memory, cpe }, std::memory_order_relaxed);
     }
 
-    ~LockfreeVector7() { 
+    ~LockfreeVector8() { 
         T* mem = memory;
         while (mem != nullptr) {
             memory = *(T**)(mem + N);
@@ -95,24 +91,26 @@ public:
     }
 
     inline unsigned int size() const {
-        return cursor.load(std::memory_order_relaxed).pos;
+        return pos.load(std::memory_order_relaxed);
     }
 
     void push(T value) {
         while (true) {
-            cursor_t cur = cursor.load(std::memory_order_relaxed);
-            if (cur.pos <= (T*)cur.end && cursor.compare_exchange_weak(cur, { cur.pos + 1, cur.end }, std::memory_order_acq_rel)) {
-                if (cur.pos < (T*)cur.end) {
-                    *cur.pos = value;
+            T* cur = pos.load(std::memory_order_acquire);
+            if (cur <= (T*)cpe) { // G
+                cur = pos.fetch_add(1, std::memory_order_acq_rel)
+                if (cur < (T*)cpe) { // G
+                    *pos = value;
                     return;
                 }
-                else if (cur.pos == (T*)cur.end) {
+                else if (cur == (T*)cpe) { // G
                     T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
                     T** fresh_end = (T**)(fresh + N);
                     *fresh_end = nullptr;
-                    //std::cout << "ATOMIC STORE: cur.pos=" << fresh << ", cur.end=" << fresh_end << std::endl;
-                    *cur.end = fresh;
-                    cursor.store({ fresh, fresh_end }, std::memory_order_release);
+                    *cpe = fresh;
+                    cpe = nullptr; // lock Gs
+                    pos.store(fresh, std::memory_order_release);
+                    cpe = fresh_end; // unlock Gs
                 }
             }
         }
