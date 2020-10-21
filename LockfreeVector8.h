@@ -96,12 +96,17 @@ public:
         return pos.load(std::memory_order_relaxed);
     }
 
+    inline bool valid_position(T* pos, T* end) {
+        return pos >= end - N && pos < end;
+    }
+
     void push(T value) {
         while (true) {
             T* cur = pos.load(std::memory_order_acquire);
             if (cur <= (T*)cpe) { // G
+                T* cpe_ = (T*)cpe;
                 cur = pos.fetch_add(1, std::memory_order_acq_rel);
-                if (cur >= ((T*)cpe)-N && cur < (T*)cpe) { // G
+                if (valid_position(cur, (T*)cpe_)) { // G
                     *cur = value;
                     safe_to_read.store(cur+1, std::memory_order_release);
                     return;
