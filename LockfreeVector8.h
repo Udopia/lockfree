@@ -106,6 +106,7 @@ public:
     }
 
     void push(T value) {
+        assert(value != S);
         while (true) {
             T* cur = pos.load(std::memory_order_acquire);
             if (cur <= (T*)cpe) { // G
