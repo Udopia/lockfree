@@ -122,7 +122,19 @@ int main(int argc, char** argv) {
     std::cout << "Running " << max_readers << " threads for reading and " << max_writers << " threads for writing " << max_numbers << " numbers to concurrent vector" << std::endl;
     auto begin = std::chrono::steady_clock::now();
 
-    if (mode == 0) { 
+    if (mode == -1) { 
+        std::vector<uint32_t> arr(1000);
+        for (uint32_t n = 0; n < max_writers; n++) {
+            for (uint32_t i = 0; i < max_numbers; i++) {
+                arr.push_back(n+1);
+            }
+        }
+        for (uint32_t n = 0; n < max_readers; n++) {
+            std::vector<unsigned int> test { };
+            test.resize(max_readers+1);
+            for (uint32_t n : arr) test[n]++;
+        }
+    } if (mode == 0) { 
         tbbvec arr(1000);
         run_test<>(arr, max_numbers, max_readers, max_writers);
     }

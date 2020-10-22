@@ -54,7 +54,7 @@ public:
             return *this; 
         }
 
-        inline bool operator != (const const_iterator& other) const {
+        inline bool operator != (const const_iterator& other) {
             return pos != other.pos && (pos != (T*)cpe || *cpe != other.pos);
         }
 
@@ -66,7 +66,6 @@ public:
 
 private:
     T* memory;
-    std::atomic<T*> safe_to_read;
     std::atomic<T*> pos;
     T** cpe; // current page end
 
@@ -77,7 +76,6 @@ private:
 public:
     LockfreeVector8() {
         memory = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-        safe_to_read.store(memory, std::memory_order_relaxed);
         pos.store(memory, std::memory_order_relaxed);
         cpe = (T**)(memory + N);
         *cpe = nullptr; // to glue the segments together
@@ -108,7 +106,6 @@ public:
                 cur = pos.fetch_add(1, std::memory_order_acq_rel);
                 if (valid_position(cur, (T*)cpe_)) { // G
                     *cur = value;
-                    safe_to_read.store(cur+1, std::memory_order_release);
                     return;
                 }
                 else if (cur == (T*)cpe) { // G
@@ -128,13 +125,16 @@ public:
         return const_iterator(memory);
     }
 
+    inline bool valid_position2(T* pos, T* end) {
+        return pos >= end - N && pos <= end;
+    }
+
     inline const_iterator end() {
-        // T* pos_ = pos.load(std::memory_order_acquire);
-        // while (pos_ > (T*)cpe) {
-        //     pos_ = pos.load(std::memory_order_acquire);
-        // }
-        // return const_iterator(pos_);
-        return const_iterator(safe_to_read.load(std::memory_order_acquire));
+        T* pos_ = pos.load(std::memory_order_acquire);
+        while (!valid_position2(pos_, (T*)cpe)) {
+            pos_ = pos.load(std::memory_order_acquire);
+        }
+        return const_iterator(pos_);
     }
 
 };
