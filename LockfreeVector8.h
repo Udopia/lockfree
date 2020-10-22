@@ -29,8 +29,9 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 /**
  * T is the content type and must be integral
  * N elements per page
+ * S sentinel element
  * */
-template<typename T = uint32_t, unsigned int N = 1000>
+template<typename T = uint32_t, unsigned int N = 1000, T S = 0>
 class LockfreeVector8 {
 public:
     class const_iterator {
@@ -41,8 +42,13 @@ public:
         const_iterator(T* mem) : pos(mem), cpe((T**)(mem + N)) { }
         ~const_iterator() { }
 
-        inline const T operator * () const { 
-            return pos < (T*)cpe ? *pos : **cpe; 
+        inline const T operator * () { 
+            T val = pos < (T*)cpe ? *pos : **cpe;
+            while (val == S) {
+                ++pos;
+                val = pos < (T*)cpe ? *pos : **cpe;
+            }
+            return val; 
         }
 
         inline const_iterator& operator ++ () { 
@@ -79,6 +85,7 @@ public:
         pos.store(memory, std::memory_order_relaxed);
         cpe = (T**)(memory + N);
         *cpe = nullptr; // to glue the segments together
+        std::fill(memory, (T*)cpe, S);
     }
 
     ~LockfreeVector8() { 
@@ -111,6 +118,7 @@ public:
                 else if (cur == (T*)cpe) { // G
                     T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
                     T** fresh_end = (T**)(fresh + N);
+                    std::fill(fresh, (T*)fresh_end, S);
                     *fresh_end = nullptr;
                     *cpe = fresh;
                     cpe = nullptr; // lock Gs
@@ -131,7 +139,8 @@ public:
 
     inline const_iterator end() {
         T* pos_ = pos.load(std::memory_order_acquire);
-        while (!valid_position2(pos_, (T*)cpe)) {
+        while (!valid_position2(pos_, (T*)cpe)) { 
+            // only few possible states during realloc could trigger that busy loop
             pos_ = pos.load(std::memory_order_acquire);
         }
         return const_iterator(pos_);
