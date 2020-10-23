@@ -36,36 +36,38 @@ class LockfreeVector8 {
 public:
     class const_iterator {
         T* pos;
-        T** cpe;
+        T** cpe; // current page end
+
+        inline void hop() { 
+            // hop from cpe to next page begin
+            if (pos == (T*)cpe && *cpe != nullptr) { 
+                pos = *cpe; 
+                cpe = (T**)(pos + N); 
+            }
+        }
 
     public:
         const_iterator(T* mem) : pos(mem), cpe((T**)(mem + N)) { }
         ~const_iterator() { }
 
         inline const T operator * () { 
-            T val = pos < (T*)cpe ? *pos : **cpe;
-            while (val == S) {
-                ++pos;
-                val = pos < (T*)cpe ? *pos : **cpe;
-            }
-            return val; 
+            hop(); 
+            while (*pos == S) this->operator++();
+            return *pos; 
         }
 
         inline const_iterator& operator ++ () { 
-            if (pos == (T*)cpe && *cpe != nullptr) { 
-                pos = *cpe; 
-                cpe = (T**)(pos + N); 
-            }
+            hop(); 
             ++pos; 
             return *this; 
         }
 
-        inline bool operator != (const const_iterator& other) {
+        inline bool operator != (const const_iterator& other) { // page end and next page begin are equal
             return pos != other.pos && (pos != (T*)cpe || *cpe != other.pos);
         }
 
         inline bool operator == (const const_iterator& other) const {
-            return pos == other.pos || (pos == (T*)cpe && *cpe == other.pos);
+            return !(*this != other);
         }
     };
     
@@ -101,10 +103,6 @@ public:
         return pos.load(std::memory_order_relaxed);
     }
 
-    inline bool valid_position(T* pos, T* end) {
-        return pos >= end - N && pos < end;
-    }
-
     void push(T value) {
         assert(value != S);
         while (true) {
@@ -112,7 +110,10 @@ public:
             if (cur <= (T*)cpe) { // G
                 T* cpe_ = (T*)cpe;
                 cur = pos.fetch_add(1, std::memory_order_acq_rel);
-                if (valid_position(cur, (T*)cpe_)) { // G
+                if (cur < (T*)cpe_ && cur >= cpe_ - N) { 
+                    // during realloc fresh and fresh_end must both be set together
+                    // which is the reason for the full interval check above.
+                    // the alternative would be a double-word CAS which is much less efficient
                     *cur = value;
                     return;
                 }
@@ -122,7 +123,7 @@ public:
                     std::fill(fresh, (T*)fresh_end, S);
                     *fresh_end = nullptr;
                     *cpe = fresh;
-                    cpe = nullptr; // lock Gs
+                    cpe = nullptr; // lock Gs (otherwise values can get lost)
                     pos.store(fresh, std::memory_order_release);
                     cpe = fresh_end; // unlock Gs
                 }
@@ -135,15 +136,23 @@ public:
     }
 
     inline bool valid_position2(T* pos, T* end) {
-        return pos >= end - N && pos <= end;
+        return pos > end - N && pos <= end;
     }
 
     inline const_iterator end() {
-        T* pos_ = pos.load(std::memory_order_acquire);
-        while (!valid_position2(pos_, (T*)cpe)) { 
-            // only few possible states during realloc could trigger that busy loop
+        T* pos_ ;
+        do {
             pos_ = pos.load(std::memory_order_acquire);
-        }
+            while (!valid_position2(pos_, (T*)cpe)) { 
+                // pos can be invalid during realloc
+                pos_ = pos.load(std::memory_order_acquire);
+            }
+            while (*(pos_ - 1) == S) { 
+                // make sure to end after a constructed element
+                if (!valid_position2(pos_, (T*)cpe)) break;
+                pos_--; 
+            }
+        } while (*pos_-1 == S);
         return const_iterator(pos_);
     }
 
