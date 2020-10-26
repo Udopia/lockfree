@@ -14,6 +14,7 @@
 #include "LockfreeVector6.h"
 #include "LockfreeVector7.h"
 #include "LockfreeVector8.h"
+#include "LockfreeVector9.h"
 #include "LockfreeMap.h"
 
 typedef LockfreeVector<uint32_t> myvec;
@@ -24,6 +25,7 @@ typedef LockfreeVector5<int32_t, 0> myvec5;
 typedef LockfreeVector6<int32_t, 0, 50> myvec6;
 typedef LockfreeVector7<uint32_t, 1000> myvec7;
 typedef LockfreeVector8<uint32_t, 1000> myvec8;
+typedef LockfreeVector9<uint32_t, 1000, 0, 16> myvec9;
 typedef LockfreeMap<int32_t, 0, 50> mymap;
 typedef tbb::concurrent_vector<uint32_t> tbbvec;
 
@@ -39,6 +41,9 @@ template<> void read<myvec7>(myvec7& arr, std::vector<unsigned int>& test, unsig
     for (uint32_t lit : arr) if (lit > 0 && lit < test.size()) test[lit]++; else std::cout << lit << " ";
 }
 template<> void read<myvec8>(myvec8& arr, std::vector<unsigned int>& test, unsigned int consumer_id) {
+    for (uint32_t lit : arr) if (lit > 0 && lit < test.size()) test[lit]++; else std::cout << lit << " ";
+}
+template<> void read<myvec9>(myvec9& arr, std::vector<unsigned int>& test, unsigned int consumer_id) {
     for (uint32_t lit : arr) if (lit > 0 && lit < test.size()) test[lit]++; else std::cout << lit << " ";
 }
 template<> void read<mymap>(mymap& map, std::vector<unsigned int>& test, unsigned int consumer_id) {
@@ -171,6 +176,10 @@ int main(int argc, char** argv) {
         run_test<>(arr, max_numbers, max_readers, max_writers);
     }
     else if (mode == 9) {
+        myvec9 arr{}; 
+        run_test<>(arr, max_numbers, max_readers, max_writers);
+    }
+    else if (mode == 10) {
         mymap arr(max_writers, 1000); 
         run_test<>(arr, max_numbers, max_readers, max_writers);
     }
