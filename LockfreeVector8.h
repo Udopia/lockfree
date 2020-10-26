@@ -107,26 +107,30 @@ public:
         assert(value != S);
         while (true) {
             T* cur = pos.load(std::memory_order_acquire);
-            if (cur <= (T*)cpe) { // G
+            if (cur <= (T*)cpe) { // block pos++ during realloc busy-loop
                 T* cpe_ = (T*)cpe;
-                cur = pos.fetch_add(1, std::memory_order_acq_rel);
-                if (cur < (T*)cpe_ && cur >= cpe_ - N) { 
+                cur = pos.fetch_add(1, std::memory_order_acq_rel); // careful: threads can stall here during realloc
+                if (cur < (T*)cpe_ && cur >= cpe_ - N) { // cur and cpe must fit together
                     // during realloc fresh and fresh_end must both be set together
                     // which is the reason for the full interval check above.
                     // the alternative would be a double-word CAS which is much less efficient
                     *cur = value;
                     return;
                 }
-                else if (cur == (T*)cpe) { // G
+                else if (cur == (T*)cpe) { // all smaller pos are allocated
                     T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
                     T** fresh_end = (T**)(fresh + N);
                     std::fill(fresh, (T*)fresh_end, S);
                     *fresh_end = nullptr;
-                    *cpe = fresh;
-                    cpe = nullptr; // lock Gs (otherwise values can get lost)
-                    pos.store(fresh, std::memory_order_release);
+                    //^^^^^^ until here it's uncritical
+                    *cpe = fresh; //now readers know about the new page
+                    //cpe = nullptr; // lock Gs (otherwise values can get lost)
+                    //^^ the above is now obsolete due to the full interval check after pos++, 
+                    //which does also capture possibly stalled threads right before pos++,
+                    //that rare case was not captured by the above "lock by minimum value"
+                    pos.store(fresh, std::memory_order_acq_rel);
                     cpe = fresh_end; // unlock Gs
-                }
+                } // loop to construct first element in new page
             }
         }
     }
@@ -147,12 +151,12 @@ public:
                 // pos can be invalid during realloc
                 pos_ = pos.load(std::memory_order_acquire);
             }
-            while (*(pos_ - 1) == S) { 
-                // make sure to end after a constructed element
-                if (!valid_position2(pos_, (T*)cpe)) break;
+            while (*(pos_-1) == S && valid_position2(pos_-1, (T*)cpe)) { 
+                // make sure to end after a constructed element (for termination)
+                // as iterator runs over unconstructed elements
                 pos_--; 
             }
-        } while (*pos_-1 == S);
+        } while (*(pos_-1) == S);
         return const_iterator(pos_);
     }
 
