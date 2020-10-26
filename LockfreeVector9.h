@@ -142,7 +142,7 @@ public:
         uintptr_t cur = pos.load(std::memory_order_acquire);
         unsigned int i = get_index(cur);
         T* mem = get_page(cur);
-        if (i < N && mem[i-1] != S) { 
+        if (i < N && (i == 0 || mem[i-1] != S)) { 
             return const_iterator(mem + i);
         }
         // we are either in realloc or the last value is still unconstructed
