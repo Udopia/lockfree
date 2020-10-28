@@ -25,45 +25,43 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <atomic>
 #include <mutex>
 #include <memory>
+#include <vector>
 
 /**
  * T is the content type and must be integral
  * N elements per page
  * S sentinel element
+ * B counter bits, assert B <= 16, N < 2^B
+ * M pages per arena
  * */
-template<typename T = uint32_t, unsigned int N = 1000, T S = 0>
+template<typename T = uint32_t, unsigned int N = 1000, T S = 0, unsigned int B = 16, unsigned int M = 2048>
 class LockfreeMap2 {
 public:
     class const_iterator {
         T* pos;
         T** cpe; // current page end
 
-        inline void hop() { 
-            // hop from cpe to next page begin
-            if (pos == (T*)cpe && *cpe != nullptr) { 
-                pos = *cpe; 
-                cpe = (T**)(pos + N); 
-            }
-        }
-
     public:
         const_iterator(T* mem) : pos(mem), cpe((T**)(mem + N)) { }
         ~const_iterator() { }
 
         inline const T operator * () { 
-            hop(); 
-            while (*pos == S) this->operator++();
+            assert(pos != nullptr);
             return *pos; 
         }
 
         inline const_iterator& operator ++ () { 
-            hop(); 
             ++pos; 
+            if (pos == (T*)cpe) { // hop from cpe to next page begin
+                pos = *cpe; 
+                if (pos != nullptr) cpe = (T**)(pos + N); 
+            }
+            if (pos != nullptr && *pos == S) pos = nullptr;
             return *this; 
         }
 
         inline bool operator != (const const_iterator& other) { // page end and next page begin are equal
-            return pos != other.pos && (pos != (T*)cpe || *cpe != other.pos);
+            return pos != other.pos;    
         }
 
         inline bool operator == (const const_iterator& other) const {
@@ -71,26 +69,33 @@ public:
         }
     };
 
-private:    
-    class LockfreeVector8 {
-        T* memory;
-        std::atomic<T*> pos;
-        T** cpe; // current page end
+    static inline unsigned int get_index(uintptr_t pos) {
+        return pos & ((1 << B) - 1);
+    }
 
-        LockfreeVector8(LockfreeVector8 const&) = delete;
-        void operator=(LockfreeVector8 const&) = delete;
-        LockfreeVector8(LockfreeVector8&& other) = delete;
+    static inline T* get_page(uintptr_t pos) {
+        return (T*)(pos >> B);
+    }
+
+private:    
+    class LockfreeVector9 {
+        T* memory;
+        std::atomic<uintptr_t> pos;
+
+        LockfreeVector9(LockfreeVector9 const&) = delete;
+        void operator=(LockfreeVector9 const&) = delete;
+        LockfreeVector9(LockfreeVector9&& other) = delete;
 
     public:
-        LockfreeVector8() {
+        LockfreeVector9() {
             memory = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-            pos.store(memory, std::memory_order_relaxed);
-            cpe = (T**)(memory + N);
+            pos.store((uintptr_t)memory << B, std::memory_order_relaxed);
+            std::fill(memory, memory + N, S);
+            T** cpe = (T**)(memory + N);
             *cpe = nullptr; // to glue the segments together
-            std::fill(memory, (T*)cpe, S);
         }
 
-        ~LockfreeVector8() { 
+        ~LockfreeVector9() { 
             T* mem = memory;
             while (mem != nullptr) {
                 memory = *(T**)(mem + N);
@@ -99,73 +104,48 @@ private:
             }
         }
 
-        inline unsigned int size() const {
-            return pos.load(std::memory_order_relaxed);
-        }
-
         void push(T value) {
             assert(value != S);
             while (true) {
-                T* cur = pos.load(std::memory_order_acquire);
-                if (cur <= (T*)cpe) { // block pos++ during realloc busy-loop
-                    T* cpe_ = (T*)cpe;
-                    cur = pos.fetch_add(1, std::memory_order_acq_rel); // careful: threads can stall here during realloc
-                    if (cur < (T*)cpe_ && cur >= cpe_ - N) { // cur and cpe must fit together
-                        // during realloc fresh and fresh_end must both be set together
-                        // which is the reason for the full interval check above.
-                        // the alternative would be a double-word CAS which is much less efficient
-                        *cur = value;
+                uintptr_t cur = pos.load(std::memory_order_acquire);
+                unsigned int i = get_index(cur);
+                if (i <= N) { // block pos++ during realloc (busy-loop)
+                    cur = pos.fetch_add(1, std::memory_order_acq_rel);
+                    i = get_index(cur);
+                    T* mem = get_page(cur);
+                    if (i < N) { 
+                        mem[i] = value;
                         return;
                     }
-                    else if (cur == (T*)cpe) { // all smaller pos are allocated
+                    else if (i == N) { // all smaller pos are allocated
                         T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-                        T** fresh_end = (T**)(fresh + N);
-                        std::fill(fresh, (T*)fresh_end, S);
-                        *fresh_end = nullptr;
+                        std::fill(fresh, fresh + N, S);
+                        T** cpe = (T**)(fresh + N);
+                        *cpe = nullptr;
                         //^^^^^^ until here it's uncritical
+                        cpe = (T**)(mem + N);
                         *cpe = fresh; //now readers know about the new page
-                        //cpe = nullptr; // lock Gs (otherwise values can get lost)
-                        //^^ the above is now obsolete due to the full interval check after pos++, 
-                        //which does also capture possibly stalled threads right before pos++,
-                        //that rare case was not captured by the above "lock by minimum value"
-                        pos.store(fresh, std::memory_order_acq_rel);
-                        cpe = fresh_end; // unlock Gs
+                        pos.store((uintptr_t)fresh << B, std::memory_order_acq_rel);
                     } // loop to construct first element in new page
                 }
             }
         }
 
-        inline const_iterator begin() {
-            return const_iterator(memory);
+        inline const_iterator begin() const {
+            // std::cout << std::this_thread::get_id() << " begin: " << memory << std::endl;
+            return const_iterator((*memory == S) ? nullptr : memory);
         }
 
-        inline bool valid_position2(T* pos, T* end) {
-            return pos > end - N && pos <= end;
-        }
-
-        inline const_iterator end() {
-            T* pos_ ;
-            do {
-                pos_ = pos.load(std::memory_order_acquire);
-                while (!valid_position2(pos_, (T*)cpe)) { 
-                    // pos can be invalid during realloc
-                    pos_ = pos.load(std::memory_order_acquire);
-                }
-                while (*(pos_-1) == S && valid_position2(pos_-1, (T*)cpe)) { 
-                    // make sure to end after a constructed element (for termination)
-                    // as iterator runs over unconstructed elements
-                    pos_--; 
-                }
-            } while (*(pos_-1) == S);
-            return const_iterator(pos_);
+        inline const_iterator end() const {
+            return const_iterator(nullptr);
         }
     };
 
-    LockfreeVector8* map; 
+    LockfreeVector9* map; 
     const unsigned int size_;
 
-    uintptr_t arena;
-    uintptr_t eoa; // end of arena
+    std::vector<T*> arenas;
+    std::atomic<uintptr_t> pos;
 
     LockfreeMap2(LockfreeMap2 const&) = delete;
     void operator=(LockfreeMap2 const&) = delete;
@@ -173,26 +153,39 @@ private:
 
 public:
     LockfreeMap2(unsigned int n) : size_(n) {
-        map = (LockfreeVector8*)std::calloc(size_, sizeof(LockfreeVector8));
+        map = (LockfreeVector9*)std::calloc(size_, sizeof(LockfreeVector9));
         for (unsigned int i = 0; i < size_; i++) {
-            new ((void*)(&map[i])) LockfreeVector(n);
+            new ((void*)(&map[i])) LockfreeVector9();
         }
+        T* arena = (T*)std::malloc(M);
+        arenas.push_back(arena);
+        pos.store((uintptr_t)arena << B, std::memory_order_relaxed);
     }
 
     ~LockfreeMap2() { 
-        for (unsigned int i = 0; i < size_; i++) free(map[i].memory);
+        for (T* arena : arenas) free(arena);
         free(map);
     }
 
-    unintptr_t pagebytes() {
+    static inline uintptr_t pagebytes() {
         return N * sizeof(T) + sizeof(T*);
     }
 
     T* allocate() {
-        while (true) { // busy loop on realloc only
-            if (arena - eoa > pagebytes()) {
-                arena += pagebytes();
-                return arena;
+        while (true) {
+            uintptr_t cur = pos.load(std::memory_order_acquire);
+            if (get_index(cur) <= M) { // block pos++ during realloc (busy-loop)
+                cur = pos.fetch_add(1, std::memory_order_acq_rel);
+                unsigned int i = get_index(cur);
+                if (i < M) { 
+                    return (T*) ((cur >> B) + i * pagebytes());
+                }
+                else if (i == M) { // all smaller pos are allocated
+                    uintptr_t fresh = (uintptr_t)std::malloc(M * pagebytes());
+                    std::fill((T*)fresh, (T*)(fresh + M * pagebytes()), S);
+                    arenas.push_back((T*)fresh);
+                    pos.store(fresh << B, std::memory_order_release);
+                } // loop to construct first element in new page
             }
         }
     }
@@ -202,13 +195,11 @@ public:
     }
 
     void push(T key, T value) {
-        T* ptr = map[key].push(value);
-        if (ptr != nullptr) safe_free(ptr);
+        map[key].push(value);
     }
 
-    inline const_iterator iter(T key, unsigned int thread_id) {
-        assert(hazards[thread_id] == nullptr); // at most one iterator per thread-id
-        return map[key].iter(hazards[thread_id]);
+    const LockfreeVector9& operator [] (T key) const {
+        return map[key];
     }
 
 };

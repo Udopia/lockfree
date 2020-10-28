@@ -52,19 +52,22 @@ public:
         ~const_iterator() { }
 
         inline const T operator * () { 
+            assert(pos != nullptr);
             return *pos; 
         }
 
         inline const_iterator& operator ++ () { 
-            do {
-                ++pos; 
-                hop();
-            } while (pos != nullptr && *pos == S);
+            ++pos; 
+            if (pos == (T*)cpe) { // hop from cpe to next page begin
+                pos = *cpe; 
+                if (pos != nullptr) cpe = (T**)(pos + N); 
+            }
+            if (pos != nullptr && *pos == S) pos = nullptr;
             return *this; 
         }
 
         inline bool operator != (const const_iterator& other) { // page end and next page begin are equal
-            return pos != other.pos && (pos != (T*)cpe || *cpe != other.pos);
+            return pos != other.pos;    
         }
 
         inline bool operator == (const const_iterator& other) const {
@@ -135,19 +138,10 @@ public:
     }
 
     inline const_iterator begin() {
-        return const_iterator(memory);
+        return const_iterator((*memory == S) ? nullptr : memory);
     }
 
     inline const_iterator end() {
-        uintptr_t cur = pos.load(std::memory_order_acquire);
-        unsigned int i = get_index(cur);
-        T* mem = get_page(cur);
-        if (i < N && (i == 0 || mem[i-1] != S)) { 
-            return const_iterator(mem + i);
-        }
-        // we are either in realloc or the last value is still unconstructed
-        // in that case, we just use the end of the last know page, indicated by nullptr 
-        // we might have to skip all trailing unconstructed values in that case
         return const_iterator(nullptr);
     }
 

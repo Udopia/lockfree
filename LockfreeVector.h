@@ -31,6 +31,22 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 
 template<typename T = uint32_t>
 class LockfreeVector {
+
+    // std::atomic<bool> lock_;
+
+    // void lock() {
+    //     for (;;) {
+    //         if (!lock_.exchange(true, std::memory_order_acquire)) {
+    //             break;
+    //         }
+    //         while (lock_.load(std::memory_order_relaxed)) { }
+    //     }
+    // }
+    
+    // void unlock() {
+    //     lock_.store(false, std::memory_order_release);
+    // }
+    
 public:
     class const_iterator {
         T* pos;
