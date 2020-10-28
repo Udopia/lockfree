@@ -1,5 +1,5 @@
 /*************************************************************************************************
-LockfreeMap2 -- Copyright (c) 2020, Markus Iser, KIT - Karlsruhe Institute of Technology
+LockfreeMap3 -- Copyright (c) 2020, Markus Iser, KIT - Karlsruhe Institute of Technology
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -17,8 +17,8 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  **************************************************************************************************/
 
-#ifndef Lockfree_Map2
-#define Lockfree_Map2
+#ifndef Lockfree_Map3
+#define Lockfree_Map3
 
 #include <cstdlib>
 #include <cstring> 
@@ -32,10 +32,9 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
  * N elements per page
  * S sentinel element
  * B counter bits, assert B <= 16, N < 2^B
- * M pages per arena
  * */
-template<typename T = uint32_t, unsigned int N = 1000, T S = 0, unsigned int B = 16, unsigned int M = 2048>
-class LockfreeMap2 {
+template<typename T = uint32_t, unsigned int N = 1000, T S = 0, unsigned int B = 16>
+class LockfreeMap3 {
 public:
     class const_iterator {
         T* pos;
@@ -60,7 +59,7 @@ public:
             return *this; 
         }
 
-        inline bool operator != (const const_iterator& other) { // page end and next page begin are equal
+        inline bool operator != (const const_iterator& other) {
             return pos != other.pos;    
         }
 
@@ -81,15 +80,13 @@ private:
     class LockfreeVector9 {
         T* memory;
         std::atomic<uintptr_t> pos;
-        LockfreeMap2* map;
 
         LockfreeVector9(LockfreeVector9 const&) = delete;
         void operator=(LockfreeVector9 const&) = delete;
         LockfreeVector9(LockfreeVector9&& other) = delete;
 
     public:
-        LockfreeVector9(LockfreeMap2* map_) : map(map_) {
-            //memory = map->allocate();//
+        LockfreeVector9() {
             memory = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
             pos.store((uintptr_t)memory << B, std::memory_order_relaxed);
             std::fill(memory, memory + N, S);
@@ -120,9 +117,8 @@ private:
                         return;
                     }
                     else if (i == N) { // all smaller pos are allocated
-                        T* fresh = map->allocate();//
-                        // T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-                        // std::fill(fresh, fresh + N, S);
+                        T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
+                        std::fill(fresh, fresh + N, S);
                         T** cpe = (T**)(fresh + N);
                         *cpe = nullptr;
                         //^^^^^^ until here it's uncritical
@@ -135,7 +131,6 @@ private:
         }
 
         inline const_iterator begin() const {
-            // std::cout << std::this_thread::get_id() << " begin: " << memory << std::endl;
             return const_iterator((*memory == S) ? nullptr : memory);
         }
 
@@ -147,63 +142,24 @@ private:
     LockfreeVector9* map; 
     const unsigned int size_;
 
-    std::vector<T*> arenas;
-    std::atomic<uintptr_t> pos;
-
-    LockfreeMap2(LockfreeMap2 const&) = delete;
-    void operator=(LockfreeMap2 const&) = delete;
-    LockfreeMap2(LockfreeMap2&& other) = delete;
-
-    static inline uintptr_t pagebytes() {
-        return N * sizeof(T) + sizeof(T*);
-    }
-
-    void new_arena() {
-        uintptr_t arena = (uintptr_t)std::malloc(M * pagebytes());
-        std::fill((T*)arena, (T*)(arena + M * pagebytes()), S);
-        arenas.push_back((T*)arena);
-        pos.store(arena << B, std::memory_order_relaxed);
-    }
+    LockfreeMap3(LockfreeMap3 const&) = delete;
+    void operator=(LockfreeMap3 const&) = delete;
+    LockfreeMap3(LockfreeMap3&& other) = delete;
 
 public:
-    LockfreeMap2(unsigned int n) : size_(n), arenas() {
-        new_arena();
-        map = (LockfreeVector9*)std::calloc(size_, sizeof(LockfreeVector9));
-        for (unsigned int i = 0; i < size_; i++) {
-            new ((void*)(&map[i])) LockfreeVector9(this);
-        }
+    LockfreeMap3(unsigned int n) : size_(n) {
+        map = new LockfreeVector9[n];
     }
 
-    ~LockfreeMap2() { 
-        for (T* arena : arenas) free(arena);
-        free(map);
-    }
-
-    T* allocate() {
-        while (true) {
-            uintptr_t cur = pos.load(std::memory_order_acquire);
-            if (get_index(cur) <= M) { // block pos++ during realloc (busy-loop)
-                cur = pos.fetch_add(1, std::memory_order_acq_rel);
-                unsigned int i = get_index(cur);
-                if (i < M) { 
-                    return (T*) ((cur >> B) + i * pagebytes());
-                }
-                else if (i == M) {
-                    new_arena();
-                }
-            }
-        }
+    ~LockfreeMap3() { 
+        delete[] map;
     }
 
     unsigned int size() const {
         return size_;
     }
 
-    void push(T key, T value) {
-        map[key].push(value);
-    }
-
-    const LockfreeVector9& operator [] (T key) const {
+    LockfreeVector9& operator [] (T key) {
         return map[key];
     }
 
