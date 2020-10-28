@@ -85,13 +85,24 @@ private:
         void operator=(LockfreeVector9 const&) = delete;
         LockfreeVector9(LockfreeVector9&& other) = delete;
 
+        void set_next(T* page, T* next) {
+            T** cpe = (T**)(page + N);
+            *cpe = next; // glue the segments
+        }
+
+        T* new_page() {
+            T* page = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
+            std::fill(page, page + N, S);
+            set_next(page, nullptr);
+            return page;
+        }
+
     public:
         LockfreeVector9() {
-            memory = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-            pos.store((uintptr_t)memory << B, std::memory_order_relaxed);
-            std::fill(memory, memory + N, S);
-            T** cpe = (T**)(memory + N);
-            *cpe = nullptr; // to glue the segments together
+            // memory = new_page();
+            // pos.store((uintptr_t)memory << B, std::memory_order_relaxed);
+            memory = nullptr;
+            pos.store((uintptr_t)N, std::memory_order_relaxed);
         }
 
         ~LockfreeVector9() { 
@@ -117,20 +128,17 @@ private:
                         return;
                     }
                     else if (i == N) { // all smaller pos are allocated
-                        T* fresh = (T*)std::malloc(N * sizeof(T) + sizeof(T*));
-                        std::fill(fresh, fresh + N, S);
-                        T** cpe = (T**)(fresh + N);
-                        *cpe = nullptr;
-                        //^^^^^^ until here it's uncritical
-                        cpe = (T**)(mem + N);
-                        *cpe = fresh; //now readers know about the new page
-                        pos.store((uintptr_t)fresh << B, std::memory_order_acq_rel);
+                        T* page = new_page();
+                        if (mem != nullptr) set_next(mem, page);
+                        else memory = page; // initialization
+                        pos.store((uintptr_t)page << B, std::memory_order_acq_rel);
                     } // loop to construct first element in new page
                 }
             }
         }
 
         inline const_iterator begin() const {
+            return const_iterator((memory != nullptr && *memory != S) ? memory : nullptr);
             return const_iterator((*memory == S) ? nullptr : memory);
         }
 
